@@ -77,10 +77,14 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+*.ipynb
 
 # IPython
 profile_default/
 ipython_config.py
+
+# Data imported by other libraries
+data/
 
 # pyenv
 #   For a library or package, you might want to ignore these files since the code is
