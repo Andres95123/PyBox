@@ -1,0 +1,16 @@
+[project]
+name = "pybox"
+version = "0.0.1"
+description = "A Python library for Explainable artificial intelligence."
+authors = [
+    { name = "Andres B.S." }
+]
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.urls]
+"Homepage" = "https://github.com/Andres95123/PyBox"
+"Issues" = "https://github.com/Andres95123/PyBox/issues"
