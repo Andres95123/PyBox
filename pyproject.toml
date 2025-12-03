@@ -1,6 +1,6 @@
 [project]
 name = "pybox"
-version = "0.0.1"
+version = "0.1.1"
 description = "A Python library for Explainable artificial intelligence."
 authors = [
     { name = "Andres B.S." }
@@ -11,7 +11,9 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "adversarial-robustness-toolbox>=1.20.1",
+    "matplotlib>=3.10.7",
     "scikit-learn>=1.7.2",
+    "tqdm>=4.67.1",
 ]
 
 [project.urls]
