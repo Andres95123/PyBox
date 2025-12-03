@@ -9,8 +9,23 @@ license = "MIT"
 license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "adversarial-robustness-toolbox>=1.20.1",
+    "scikit-learn>=1.7.2",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/Andres95123/PyBox"
 "Issues" = "https://github.com/Andres95123/PyBox/issues"
+
+[dependency-groups]
+dev = [
+    "mkdocs>=1.6.1",
+    "pytest>=9.0.1",
+    "ruff>=0.14.7",
+]
+
+[tool.uv.workspace]
+members = [
+    ".",
+]
