@@ -2,9 +2,7 @@
 name = "pybox"
 version = "0.1.1"
 description = "A Python library for Explainable artificial intelligence."
-authors = [
-    { name = "Andres B.S." }
-]
+authors = [{ name = "Andres B.S." }]
 license = "MIT"
 license-files = ["LICENSE"]
 readme = "README.md"
@@ -21,13 +19,7 @@ dependencies = [
 "Issues" = "https://github.com/Andres95123/PyBox/issues"
 
 [dependency-groups]
-dev = [
-    "mkdocs>=1.6.1",
-    "pytest>=9.0.1",
-    "ruff>=0.14.7",
-]
+dev = ["mkdocs>=1.6.1", "pytest>=9.0.1", "ruff>=0.14.7"]
 
 [tool.uv.workspace]
-members = [
-    ".",
-]
+members = ["."]
