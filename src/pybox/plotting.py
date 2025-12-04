@@ -7,7 +7,7 @@ from art.attacks.evasion import (
     ProjectedGradientDescent,
 )
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler
-from typing import List, Any
+from typing import List, Any, Literal
 from tqdm import tqdm
 
 
@@ -15,10 +15,15 @@ def plot_adversarial_img(
     adversarial_generator: Any,
     input_imgs: np.ndarray,
     methods: List[str],
+    # Preferences
     plot_diference: bool = True,
+    diference_calculation: Literal["absolute", "squared"] = "squared",
+    # Normalization
     scaler: MinMaxScaler | StandardScaler | RobustScaler | None = MinMaxScaler(),
     clipping_range: tuple[float, float] | None = (0.0, 1.0),
+    # ART Configuration
     max_iter: int = 10,
+    # Labeling
     ground_truth: np.ndarray | None = None,
     predict_labels: bool = False,
 ) -> None:
@@ -161,7 +166,14 @@ def plot_adversarial_img(
             axes[i, adv_col].set_yticks([])
 
             if plot_diference:
-                difference = np.abs(adversarial_img[0] - selected_img[0])
+                if diference_calculation == "squared":
+                    difference = (adversarial_img[0] - selected_img[0]) ** 2
+                elif diference_calculation == "absolute":
+                    difference = np.abs(adversarial_img[0] - selected_img[0])
+                else:
+                    raise ValueError(
+                        "diference_calculation must be either 'absolute' or 'squared'"
+                    )
 
                 # Apply an scaler if added
                 if scaler is not None:
@@ -185,6 +197,12 @@ def plot_adversarial_img(
         # Add summed and clipped differences column
         if plot_diference and all_differences:
             summed_differences = np.sum(all_differences, axis=0)
+
+            if scaler is not None:
+                summed_differences = scaler.fit_transform(
+                    summed_differences.reshape(-1, 1)
+                ).reshape(summed_differences.shape)
+
             if clipping_range is not None:
                 summed_differences = np.clip(
                     summed_differences, clipping_range[0], clipping_range[1]
