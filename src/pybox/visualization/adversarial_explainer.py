@@ -11,7 +11,8 @@ from art.attacks.evasion import (
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler
 from typing import List, Any, Literal, Callable
 from tqdm import tqdm
-import warnings
+
+from ..compare.image_comparator import ImageComparator, METHODS, CMAP
 
 
 METHOD_MAP = {
@@ -35,14 +36,11 @@ class AdversarialExplainer:
     Supported attack methods: 'cwL0', 'cwL2', 'cwLinf', 'deepfool', 'fgsm', 'pgd'
 
     Supported difference calculations:
-    - 'absolute': Mean Absolute Error (MAE) - L1 distance
-    - 'squared': Mean Squared Error (MSE) - L2 distance squared
-    - 'rmse': Root Mean Square Error - square root of MSE
-    - 'cosine': Cosine distance - 1 minus cosine similarity
-    - 'ssim': Structural Similarity Index distance - perceptual quality metric
-    - 'euclidean': Euclidean distance - L2 norm of difference
-    - 'manhattan': Manhattan distance - L1 norm of difference
-    - 'chebyshev': Chebyshev distance - L-inf norm (maximum difference)
+    - 'MAE': Mean Absolute Error (MAE) - L1 distance
+    - 'MSE': Mean Squared Error (MSE) - L2 distance squared
+    - 'RMSE': Root Mean Square Error - square root of MSE
+    - 'COSINE': Cosine distance - 1 minus cosine similarity
+    - 'GMD': Gradient Magnitude Difference - perceptual quality metric
     """
 
     def __init__(
@@ -52,16 +50,8 @@ class AdversarialExplainer:
         methods: List[str],
         # Preferences
         plot_difference: bool = True,
-        difference_calculation: Literal[
-            "absolute",
-            "squared",
-            "rmse",
-            "cosine",
-            "ssim",
-            "euclidean",
-            "manhattan",
-            "chebyshev",
-        ] = "squared",
+        difference_calculation: METHODS = "MAE",
+        cmap : CMAP = "RGB",
         # Normalization
         scaler: MinMaxScaler | StandardScaler | RobustScaler | None = MinMaxScaler(),
         clipping_range: tuple[float, float] | None = (0.0, 1.0),
@@ -82,15 +72,12 @@ class AdversarialExplainer:
                            Defaults to True.
 
             difference_calculation: Method for calculating pixel-wise differences. Options:
-                - 'absolute': |adv - orig| (Mean Absolute Error)
-                - 'squared': (adv - orig)² (Mean Squared Error)
-                - 'rmse': √((adv - orig)²) (Root Mean Square Error)
-                - 'cosine': 1 - cosine_similarity (cosine distance)
-                - 'ssim': 1 - SSIM (structural similarity distance)
-                - 'euclidean': √(Σ(adv - orig)²) (L2 norm)
-                - 'manhattan': Σ|adv - orig| (L1 norm)
-                - 'chebyshev': max|adv - orig| (L-inf norm)
-                Defaults to 'squared'.
+                - 'MAE': |adv - orig| (Mean Absolute Error)
+                - 'MSE': (adv - orig)² (Mean Squared Error)
+                - 'RMSE': √((adv - orig)²) (Root Mean Square Error)
+                - 'COSINE': 1 - cosine_similarity (cosine distance)
+                - 'GMD': Gradient Magnitude Difference (perceptual quality metric)
+                Defaults to 'MAE'.
 
             scaler: Scaler for normalizing difference maps. Options: MinMaxScaler(),
                    StandardScaler(), RobustScaler(), or None. Defaults to MinMaxScaler().
@@ -117,13 +104,14 @@ class AdversarialExplainer:
                 "adversarial_generator must be a valid classifier with predict and loss_gradient methods"
             )
 
-        self.adversarial_generator = adversarial_generator
-        self.methods = methods
-        self.plot_difference = plot_difference
-        self.difference_calculation = difference_calculation
-        self.scaler = scaler
-        self.clipping_range = clipping_range
-        self.max_iter = max_iter
+        self.adversarial_generator: Any = adversarial_generator
+        self.methods: List[str] = methods
+        self.plot_difference: bool = plot_difference
+        self.difference_calculation: METHODS = difference_calculation
+        self.scaler: MinMaxScaler | StandardScaler | RobustScaler | None = scaler
+        self.clipping_range: tuple[float, float] | None = clipping_range
+        self.max_iter: int = max_iter
+        self.cmap: CMAP = cmap
 
     def __get_method_instance(self, method_name: str) -> Any:
         """Instantiate the attack method based on its name."""
@@ -142,129 +130,6 @@ class AdversarialExplainer:
             )
         else:
             raise ValueError(f"Unsupported attack method: {method_name}")
-
-    def __get_difference_function(
-        self,
-    ) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
-        """
-        Return the appropriate difference calculation function based on the configured method.
-
-        Supported difference calculations:
-        - 'absolute': Mean Absolute Error (MAE/L1 distance)
-        - 'squared': Mean Squared Error (MSE/L2 distance squared)
-        - 'rmse': Root Mean Square Error (square root of MSE)
-        - 'cosine': Cosine distance (1 - cosine similarity)
-        - 'ssim': Structural Similarity Index (simplified implementation)
-        - 'euclidean': Euclidean distance (L2 norm)
-        - 'manhattan': Manhattan distance (L1 norm)
-        - 'chebyshev': Chebyshev distance (L-inf norm)
-
-        Returns:
-            Callable that takes (adversarial_image, original_image) and returns difference array
-        """
-        if self.difference_calculation == "absolute":
-            return lambda adv, orig: np.abs(adv - orig)
-
-        elif self.difference_calculation == "squared":
-            return lambda adv, orig: (adv - orig) ** 2
-
-        elif self.difference_calculation == "rmse":
-            return lambda adv, orig: np.sqrt((adv - orig) ** 2)
-
-        elif self.difference_calculation == "cosine":
-
-            def cosine_distance(adv, orig):
-                # Flatten for cosine calculation
-                adv_flat = adv.flatten()
-                orig_flat = orig.flatten()
-
-                # Compute cosine similarity
-                dot_product = np.dot(adv_flat, orig_flat)
-                norm_adv = np.linalg.norm(adv_flat)
-                norm_orig = np.linalg.norm(orig_flat)
-
-                # Avoid division by zero
-                if norm_adv == 0 or norm_orig == 0:
-                    return np.zeros_like(adv)
-
-                cosine_sim = dot_product / (norm_adv * norm_orig)
-                # Return distance (1 - similarity), reshaped to original dimensions
-                distance = 1 - cosine_sim
-                return np.full_like(adv, distance)
-
-            return cosine_distance
-
-        elif self.difference_calculation == "ssim":
-
-            def ssim_distance(adv, orig):
-                """
-                Simplified Structural Similarity Index (SSIM) distance.
-                SSIM measures image quality degradation due to data compression or other processing.
-                Returns 1 - SSIM (distance measure where 0 = identical, 1 = completely different).
-                """
-                # Constants (typical values for 8-bit images)
-                C1 = (0.01 * 1.0) ** 2  # 1.0 is the dynamic range
-                C2 = (0.03 * 1.0) ** 2
-
-                # Compute means
-                mu_adv = np.mean(adv)
-                mu_orig = np.mean(orig)
-
-                # Compute variances and covariance
-                sigma_adv_sq = np.var(adv)
-                sigma_orig_sq = np.var(orig)
-                sigma_adv_orig = np.cov(adv.flatten(), orig.flatten())[0, 1]
-
-                # Compute SSIM
-                numerator = (2 * mu_adv * mu_orig + C1) * (2 * sigma_adv_orig + C2)
-                denominator = (mu_adv**2 + mu_orig**2 + C1) * (
-                    sigma_adv_sq + sigma_orig_sq + C2
-                )
-
-                if denominator == 0:
-                    ssim = 1.0
-                else:
-                    ssim = numerator / denominator
-
-                # Return distance (1 - SSIM), broadcasted to image shape
-                distance = 1 - ssim
-                return np.full_like(adv, max(0, min(1, distance)))
-
-            return ssim_distance
-
-        elif self.difference_calculation == "euclidean":
-
-            def euclidean_distance(adv, orig):
-                # L2 norm of the difference
-                diff = adv - orig
-                return np.sqrt(np.sum(diff**2, axis=-1, keepdims=True))
-
-            return euclidean_distance
-
-        elif self.difference_calculation == "manhattan":
-
-            def manhattan_distance(adv, orig):
-                # L1 norm of the difference
-                diff = adv - orig
-                return np.sum(np.abs(diff), axis=-1, keepdims=True)
-
-            return manhattan_distance
-
-        elif self.difference_calculation == "chebyshev":
-
-            def chebyshev_distance(adv, orig):
-                # L-inf norm of the difference (maximum absolute difference)
-                diff = adv - orig
-                return np.max(np.abs(diff), axis=-1, keepdims=True)
-
-            return chebyshev_distance
-
-        else:
-            raise ValueError(
-                f"Unsupported difference_calculation method: '{self.difference_calculation}'. "
-                f"Supported methods: 'absolute', 'squared', 'rmse', 'cosine', 'ssim', "
-                f"'euclidean', 'manhattan', 'chebyshev'"
-            )
 
     def explain(
         self,
@@ -293,14 +158,11 @@ class AdversarialExplainer:
 
         **Normalization:**
         - Pixel differences are computed using the specified method:
-          * 'absolute': |adv - orig| (Mean Absolute Error/L1 distance)
-          * 'squared': (adv - orig)² (Mean Squared Error/L2 distance squared)
-          * 'rmse': √((adv - orig)²) (Root Mean Square Error)
-          * 'cosine': 1 - cosine_similarity (cosine distance)
-          * 'ssim': 1 - SSIM (structural similarity distance)
-          * 'euclidean': √(Σ(adv - orig)²) (L2 norm)
-          * 'manhattan': Σ|adv - orig| (L1 norm)
-          * 'chebyshev': max|adv - orig| (L-inf norm)
+          * 'MAE': |adv - orig| (Mean Absolute Error/L1 distance)
+          * 'MSE': (adv - orig)² (Mean Squared Error/L2 distance squared)
+          * 'RMSE': √((adv - orig)²) (Root Mean Square Error)
+          * 'COSINE': 1 - cosine_similarity (cosine distance)
+          * 'GMD': Gradient Magnitude Difference (perceptual quality metric)
         - Differences are scaled using the configured scaler (MinMaxScaler, StandardScaler, etc.)
         - All values are clipped to the specified range if clipping_range is configured
 
@@ -338,21 +200,21 @@ class AdversarialExplainer:
             >>> explainer = AdversarialExplainer(
             ...     adversarial_generator=model,
             ...     methods=['fgsm', 'pgd'],
-            ...     difference_calculation='squared'  # MSE differences
+            ...     difference_calculation='MSE'  # MSE differences
             ... )
             >>>
-            >>> # Example with SSIM-based perceptual differences
+            >>> # Example with GMD-based perceptual differences
             >>> explainer_ssim = AdversarialExplainer(
             ...     adversarial_generator=model,
             ...     methods=['fgsm', 'deepfool'],
-            ...     difference_calculation='ssim'  # Perceptual quality differences
+            ...     difference_calculation='GMD'  # Perceptual quality differences
             ... )
             >>>
             >>> # Example with cosine distance (useful for feature-level differences)
             >>> explainer_cosine = AdversarialExplainer(
             ...     adversarial_generator=model,
             ...     methods=['cwL2', 'pgd'],
-            ...     difference_calculation='cosine'  # Cosine distance
+            ...     difference_calculation='COSINE'  # Cosine distance
             ... )
             >>>
             >>> test_images = np.random.rand(3, 32, 32, 3)  # CIFAR-like images
@@ -443,8 +305,13 @@ class AdversarialExplainer:
                 # Calculate and display difference map
                 if self.plot_difference:
                     # Compute difference using the configured calculation method
-                    diff_func = self.__get_difference_function()
-                    difference = diff_func(adversarial_img[0], selected_img[0])
+
+                    difference = ImageComparator().compare(
+                        adversarial_img[0],
+                        selected_img[0],
+                        method=self.difference_calculation,
+                        cmap=self.cmap,
+                    )
 
                     # Normalize difference using configured scaler
                     if self.scaler is not None:
