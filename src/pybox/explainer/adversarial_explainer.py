@@ -1,13 +1,7 @@
 from matplotlib import pyplot as plt
 import numpy as np
-from art.attacks.evasion import (
-    CarliniL0Method,
-    CarliniLInfMethod,
-    CarliniL2Method,
-    DeepFool,
-    FastGradientMethod,
-    ProjectedGradientDescent,
-)
+from art.attacks import EvasionAttack
+import inspect
 
 
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler
@@ -15,16 +9,6 @@ from typing import List, Any, Callable
 from tqdm import tqdm
 
 from ..compare.image_comparator import ImageComparator, METHODS, CMAP
-
-
-METHOD_MAP = {
-    "cwL0": CarliniL0Method,
-    "cwL2": CarliniL2Method,
-    "cwLinf": CarliniLInfMethod,
-    "deepfool": DeepFool,
-    "fgsm": FastGradientMethod,
-    "pgd": ProjectedGradientDescent,
-}
 
 
 class AdversarialExplainer:
@@ -49,7 +33,7 @@ class AdversarialExplainer:
         self,
         # Base configuration
         adversarial_generator,
-        methods: List[str],
+        methods: List[EvasionAttack],
         # Preferences
         plot_difference: bool = True,
         difference_calculation: METHODS | Callable = "MAE",
@@ -67,8 +51,7 @@ class AdversarialExplainer:
             adversarial_generator: A trained classifier with predict() and loss_gradient() methods.
                                  Must be compatible with ART's attack implementations.
 
-            methods: List of adversarial attack methods to use. Supported methods:
-                    'cwL0', 'cwL2', 'cwLinf', 'deepfool', 'fgsm', 'pgd'
+            methods: List of adversarial attack evasion classes, from art.attack.evasion import *
 
             plot_difference: If True, displays difference maps between original and adversarial images.
                            Defaults to True.
@@ -96,11 +79,28 @@ class AdversarialExplainer:
             ValueError: If methods contains unsupported attack types.
             TypeError: If adversarial_generator lacks required methods.
         """
-        if not all(method in METHOD_MAP.keys() for method in methods):
-            raise ValueError(
-                "methods must be a list containing any of the following strings: "
-                f"{', '.join(METHOD_MAP.keys())}"
+        if not isinstance(methods, (list, tuple)):
+            raise TypeError(
+                "methods must be a list or tuple of EvasionAttack instances or EvasionAttack classes"
             )
+
+        # Normalize methods: accept instances or classes (try to instantiate classes)
+        normalized_methods = []
+        for m in methods:
+            if inspect.isclass(m):
+                try:
+                    m = m(adversarial_generator, verbose=False)
+                except Exception as e:
+                    raise TypeError(
+                        f"Failed to instantiate attack class {getattr(m, '__name__', str(m))}: {e}"
+                    )
+            if not hasattr(m, "generate"):
+                raise TypeError(
+                    f"Each element in 'methods' must be an instance of ART EvasionAttack (or a class that can be instantiated), got {type(m).__name__}"
+                )
+            normalized_methods.append(m)
+
+        methods = normalized_methods
 
         if not hasattr(adversarial_generator, "predict"):
             raise TypeError(
@@ -108,31 +108,13 @@ class AdversarialExplainer:
             )
 
         self.adversarial_generator: Any = adversarial_generator
-        self.methods: List[str] = methods
+        self.methods: List[EvasionAttack] = methods
         self.plot_difference: bool = plot_difference
         self.difference_calculation: METHODS | Callable = difference_calculation
         self.scaler: MinMaxScaler | StandardScaler | RobustScaler | None = scaler
         self.clipping_range: tuple[float, float] | None = clipping_range
         self.max_iter: int = max_iter
         self.cmap: CMAP = cmap
-
-    def __get_method_instance(self, method_name: str) -> Any:
-        """Instantiate the attack method based on its name."""
-        attack_class = METHOD_MAP[method_name]
-        if method_name in ["cwL0", "cwL2", "cwLinf", "deepfool"]:
-            return attack_class(
-                classifier=self.adversarial_generator,
-                max_iter=self.max_iter,
-                verbose=False,
-            )
-        elif method_name == "fgsm":
-            return attack_class(estimator=self.adversarial_generator, eps=0.2)
-        elif method_name == "pgd":
-            return attack_class(
-                estimator=self.adversarial_generator, eps=0.3, max_iter=self.max_iter
-            )
-        else:
-            raise ValueError(f"Unsupported attack method: {method_name}")
 
     def explain(
         self,
@@ -147,82 +129,6 @@ class AdversarialExplainer:
         initialization and creates a comprehensive visualization showing the original images,
         adversarial variants, their differences, and a summary of aggregated differences across
         all attack methods.
-
-        **Plot Layout:**
-        Each row displays one input image with the following columns:
-        - Original Image
-        - [Adversarial Image 1] [Difference 1] [Adversarial Image 2] [Difference 2] ...
-        - Sum of Differences (if plot_difference=True)
-
-        **Labels and Annotations:**
-        - Ground truth labels (if provided) are shown below the original image
-        - Predicted labels (if predict_labels=True) are shown below each adversarial image
-        - Normalized differences are visualized using the configured scaler
-
-        **Normalization:**
-        - Pixel differences are computed using the specified method:
-          * 'MAE': |adv - orig| (Mean Absolute Error/L1 distance)
-          * 'MSE': (adv - orig)² (Mean Squared Error/L2 distance squared)
-          * 'RMSE': √((adv - orig)²) (Root Mean Square Error)
-          * 'COSINE': 1 - cosine_similarity (cosine distance)
-          * 'GMD': Gradient Magnitude Difference (perceptual quality metric)
-        - Differences are scaled using the configured scaler (MinMaxScaler, StandardScaler, etc.)
-        - All values are clipped to the specified range if clipping_range is configured
-
-        :param input_imgs: Input images to generate adversarial examples from.
-                          Must be a 4D numpy array with shape (num_images, height, width, channels).
-                          Pixel values should typically be in range [0, 1] or [0, 255].
-        :type input_imgs: np.ndarray
-
-        :param ground_truth: Ground truth labels for the input images. When provided, these labels
-                            are displayed below the original image column for reference. Must have
-                            shape (num_images,) and contain class indices or labels.
-                            Defaults to None (no ground truth labels displayed).
-        :type ground_truth: np.ndarray | None
-
-        :param predict_labels: If True, the model's predicted class labels are displayed below
-                              each adversarial image. This helps visualize how the adversarial
-                              perturbations affect the model's predictions.
-                              Defaults to False (no predicted labels displayed).
-        :type predict_labels: bool
-
-        :return: None. The visualization is displayed using matplotlib.pyplot.show().
-        :rtype: None
-
-        :raises TypeError: If input_imgs is not a numpy array or adversarial_generator lacks
-                          required methods (predict and loss_gradient).
-        :raises ValueError: If input_imgs is empty (shape[0] == 0) or contains invalid data.
-
-        **Example:**
-
-            >>> from pybox.visualization import AdversarialExplainer
-            >>> import numpy as np
-            >>> # Assuming you have a trained model and test images
-            >>>
-            >>> # Example with squared error (MSE) differences
-            >>> explainer = AdversarialExplainer(
-            ...     adversarial_generator=model,
-            ...     methods=['fgsm', 'pgd'],
-            ...     difference_calculation='MSE'  # MSE differences
-            ... )
-            >>>
-            >>> # Example with GMD-based perceptual differences
-            >>> explainer_ssim = AdversarialExplainer(
-            ...     adversarial_generator=model,
-            ...     methods=['fgsm', 'deepfool'],
-            ...     difference_calculation='GMD'  # Perceptual quality differences
-            ... )
-            >>>
-            >>> # Example with cosine distance (useful for feature-level differences)
-            >>> explainer_cosine = AdversarialExplainer(
-            ...     adversarial_generator=model,
-            ...     methods=['cwL2', 'pgd'],
-            ...     difference_calculation='COSINE'  # Cosine distance
-            ... )
-            >>>
-            >>> test_images = np.random.rand(3, 32, 32, 3)  # CIFAR-like images
-            >>> ground_truth = np.array([5, 2, 8])
-            >>> explainer.explain(test_images, ground_truth=ground_truth, predict_labels=True)
         """
 
         # Input validation: Type checking
@@ -275,12 +181,10 @@ class AdversarialExplainer:
 
             # Generate adversarial examples for each method
             for j, method in enumerate(self.methods):
-                # Get attack instance for this method
-                attack = self.__get_method_instance(method)
-
                 # Generate adversarial example
                 selected_img = input_imgs[i : i + 1]
-                adversarial_img = attack.generate(x=selected_img)
+                # Get attack instance for this method
+                adversarial_img = method.generate(x=selected_img)
 
                 # Clip adversarial image if necessary
                 if self.clipping_range is not None:
@@ -293,7 +197,9 @@ class AdversarialExplainer:
                 # Display adversarial image
                 adv_col = 1 + j * cols_per_method
                 axes[i, adv_col].imshow(adversarial_img[0])
-                axes[i, adv_col].set_title(f"Adversarial ({method})", fontweight="bold")
+                axes[i, adv_col].set_title(
+                    f"Adversarial ({method.__class__.__name__})", fontweight="bold"
+                )
 
                 # Add predicted label if requested
                 if predict_labels:
@@ -340,7 +246,7 @@ class AdversarialExplainer:
                     diff_col = adv_col + 1
                     axes[i, diff_col].imshow(difference, cmap="hot")
                     axes[i, diff_col].set_title(
-                        f"Difference ({method})", fontweight="bold"
+                        f"Difference ({method.__class__.__name__})", fontweight="bold"
                     )
                     axes[i, diff_col].set_xticks([])
                     axes[i, diff_col].set_yticks([])
