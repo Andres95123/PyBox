@@ -32,12 +32,30 @@ class ImageComparator:
 
         if method == "MAE":
             dif_img = np.abs(image1 - image2)
+            # Normalizar a [0, 255]
+            maxv = np.max(dif_img)
+            if maxv > 0:
+                dif_img = (dif_img / maxv) * 255
+            else:
+                dif_img = np.zeros_like(dif_img)
+            dif_img = dif_img.astype(np.uint8)
         elif method == "MSE":
             dif_img = np.square(image1 - image2)
+            # Normalizar a [0, 255]
+            maxv = np.max(dif_img)
+            if maxv > 0:
+                dif_img = (dif_img / maxv) * 255
+            else:
+                dif_img = np.zeros_like(dif_img)
+            dif_img = dif_img.astype(np.uint8)
         elif method == "RMSE":
             dif_img = np.sqrt(np.square(image1 - image2))
-            # Normalize the RMSE result to the range [0, 255]
-            dif_img = (dif_img / np.max(dif_img)) * 255
+            # Normalize the RMSE result to the range [0, 255], avoid division by zero
+            maxv = np.max(dif_img)
+            if maxv > 0:
+                dif_img = (dif_img / maxv) * 255
+            else:
+                dif_img = np.zeros_like(dif_img)
             dif_img = dif_img.astype(np.uint8)
         elif method == "COSINE":
 
@@ -51,8 +69,12 @@ class ImageComparator:
             diff = 1 - sim
             # Expand to 3 channels
             dif_img = np.stack([diff] * 3, axis=-1)
-            # Normalize to [0, 255]
-            dif_img = (dif_img / np.max(dif_img)) * 255
+            # Normalize to [0, 255], avoid division by zero
+            maxv = np.max(dif_img)
+            if maxv > 0:
+                dif_img = (dif_img / maxv) * 255
+            else:
+                dif_img = np.zeros_like(dif_img)
             dif_img = dif_img.astype(np.uint8)
         elif method == "GMD":
 
@@ -67,8 +89,12 @@ class ImageComparator:
             g1 = compute_grad(image1)
             g2 = compute_grad(image2)
             dif_img = np.abs(g1 - g2)
-            # Normalize to [0, 255]
-            dif_img = (dif_img / np.max(dif_img)) * 255
+            # Normalize to [0, 255], avoid division by zero
+            maxv = np.max(dif_img)
+            if maxv > 0:
+                dif_img = (dif_img / maxv) * 255
+            else:
+                dif_img = np.zeros_like(dif_img)
             dif_img = dif_img.astype(np.uint8)
         else:
             raise ValueError(
@@ -77,11 +103,13 @@ class ImageComparator:
 
         # If Gray scale is selected, convert the difference image to grayscale/luminance
         if cmap.upper() == "GRAY":
-            dif_img = np.dot(dif_img[..., :3], [0.2989, 0.5870, 0.1140])
+            # Compute per-pixel mean across color channels and keep a single channel
+            dif_img = np.mean(dif_img[..., :3], axis=-1)
             dif_img = np.expand_dims(dif_img, axis=-1)
+            dif_img = dif_img.astype(np.uint8)
         elif cmap.upper() != "RGB":
             raise ValueError(
-                f"Cmap must be a valid option : RGB, GRAY, HEATMAP. Got {cmap} instead."
+                f"Cmap must be a valid option : RGB, GRAY. Got {cmap} instead."
             )
 
         return dif_img
