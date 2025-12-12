@@ -8,8 +8,10 @@ from art.attacks.evasion import (
     FastGradientMethod,
     ProjectedGradientDescent,
 )
+
+
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler
-from typing import List, Any, Literal, Callable
+from typing import List, Any, Callable
 from tqdm import tqdm
 
 from ..compare.image_comparator import ImageComparator, METHODS, CMAP
@@ -46,12 +48,12 @@ class AdversarialExplainer:
     def __init__(
         self,
         # Base configuration
-        adversarial_generator: Any,
+        adversarial_generator,
         methods: List[str],
         # Preferences
         plot_difference: bool = True,
-        difference_calculation: METHODS = "MAE",
-        cmap : CMAP = "RGB",
+        difference_calculation: METHODS | Callable = "MAE",
+        cmap: CMAP = "RGB",
         # Normalization
         scaler: MinMaxScaler | StandardScaler | RobustScaler | None = MinMaxScaler(),
         clipping_range: tuple[float, float] | None = (0.0, 1.0),
@@ -79,6 +81,9 @@ class AdversarialExplainer:
                 - 'GMD': Gradient Magnitude Difference (perceptual quality metric)
                 Defaults to 'MAE'.
 
+                Also, you can add a custom function, but it must have as input 2 images and output a image.
+                If you are using a custom function, the CMAP will not work, you must transform it at your own.
+
             scaler: Scaler for normalizing difference maps. Options: MinMaxScaler(),
                    StandardScaler(), RobustScaler(), or None. Defaults to MinMaxScaler().
 
@@ -97,17 +102,15 @@ class AdversarialExplainer:
                 f"{', '.join(METHOD_MAP.keys())}"
             )
 
-        if not hasattr(adversarial_generator, "predict") or not hasattr(
-            adversarial_generator, "loss_gradient"
-        ):
+        if not hasattr(adversarial_generator, "predict"):
             raise TypeError(
-                "adversarial_generator must be a valid classifier with predict and loss_gradient methods"
+                "Adversarial generator must implement a 'predict' method. You may use one of the ART classifiers or wrappers: "
             )
 
         self.adversarial_generator: Any = adversarial_generator
         self.methods: List[str] = methods
         self.plot_difference: bool = plot_difference
-        self.difference_calculation: METHODS = difference_calculation
+        self.difference_calculation: METHODS | Callable = difference_calculation
         self.scaler: MinMaxScaler | StandardScaler | RobustScaler | None = scaler
         self.clipping_range: tuple[float, float] | None = clipping_range
         self.max_iter: int = max_iter
@@ -305,13 +308,19 @@ class AdversarialExplainer:
                 # Calculate and display difference map
                 if self.plot_difference:
                     # Compute difference using the configured calculation method
-
-                    difference = ImageComparator().compare(
-                        adversarial_img[0],
-                        selected_img[0],
-                        method=self.difference_calculation,
-                        cmap=self.cmap,
-                    )
+                    if not callable(
+                        self.difference_calculation
+                    ):  # Use a pre-distance calculation
+                        difference = ImageComparator().compare(
+                            adversarial_img[0],
+                            selected_img[0],
+                            method=self.difference_calculation,
+                            cmap=self.cmap,
+                        )
+                    else:
+                        difference = self.difference_calculation(
+                            adversarial_img[0], selected_img[0]
+                        )  # Uses a custom calculation
 
                     # Normalize difference using configured scaler
                     if self.scaler is not None:
