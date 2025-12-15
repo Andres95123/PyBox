@@ -2,11 +2,10 @@ from typing import Literal
 import numpy as np
 
 METHODS = Literal["MAE", "MSE", "RMSE", "COSINE", "GMD"]
-CMAP = Literal["RGB", "GRAY"]
-
 
 class ImageComparator:
     def __init__(self):
+        """Initialize the ImageComparator."""
         pass
 
     def compare(
@@ -14,16 +13,19 @@ class ImageComparator:
         image1: np.ndarray,
         image2: np.ndarray,
         method: METHODS = "MAE",
-        cmap: CMAP = "RGB",
     ) -> np.ndarray:
         """
         Compares images using the specified method and returns the difference.
+
         Args:
-            method (Literal ["MAE", "MSE", "SSIM", "PSNR"]): The method to use for comparison.
-            image1 (np.ndarray): The first image to compare.
-            image2 (np.ndarray): The second image to compare.
+            method (str): The method to use for comparison (MAE, MSE, RMSE, COSINE, GMD).
+            image1 (np.ndarray): The first image to compare (H, W, C).
+            image2 (np.ndarray): The second image to compare (H, W, C).
+
         Returns:
-            np.ndarray: The result of the image comparison.
+            np.ndarray: The result of the image comparison in RGB format (H, W, C or H, W).
+                Always returns 3 channels for consistency.
+
         Raises:
             ValueError: If the method is not a valid option.
         """
@@ -67,7 +69,7 @@ class ImageComparator:
 
             sim = cosine_sim(image1.astype(float), image2.astype(float))
             diff = 1 - sim
-            # Expand to 3 channels
+            # Expand to 3 channels for consistency
             dif_img = np.stack([diff] * 3, axis=-1)
             # Normalize to [0, 255], avoid division by zero
             maxv = np.max(dif_img)
@@ -101,15 +103,10 @@ class ImageComparator:
                 f"Method must be a valid option : {', '.join(METHODS.__args__)}"
             )
 
-        # If Gray scale is selected, convert the difference image to grayscale/luminance
-        if cmap.upper() == "GRAY":
-            # Compute per-pixel mean across color channels and keep a single channel
-            dif_img = np.mean(dif_img[..., :3], axis=-1)
-            dif_img = np.expand_dims(dif_img, axis=-1)
-            dif_img = dif_img.astype(np.uint8)
-        elif cmap.upper() != "RGB":
-            raise ValueError(
-                f"Cmap must be a valid option : RGB, GRAY. Got {cmap} instead."
-            )
+        # Always ensure 3 channels for consistency
+        if len(dif_img.shape) == 2:
+            dif_img = np.stack([dif_img] * 3, axis=-1)
+        elif dif_img.shape[-1] == 1:
+            dif_img = np.repeat(dif_img, 3, axis=-1)
 
         return dif_img

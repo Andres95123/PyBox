@@ -1,32 +1,53 @@
-from matplotlib import pyplot as plt
 import numpy as np
 from art.attacks import EvasionAttack
 import inspect
-
 
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler
 from typing import List, Any, Callable
 from tqdm import tqdm
 
-from ..compare.image_comparator import ImageComparator, METHODS, CMAP
+from ..compare.image_comparator import ImageComparator, METHODS
 
 
 class AdversarialExplainer:
     """
-    Class for visualizing adversarial examples using various attack methods.
+    AdversarialExplainer: Generate adversarial examples and compute differences across multiple attacks.
 
-    This class provides comprehensive visualization of adversarial attacks by generating
-    adversarial examples using multiple attack methods and displaying them alongside
-    their original images, difference maps, and aggregated statistics.
+    This class generates adversarial examples using multiple attack methods and computes per-pixel
+    differences between original and adversarial images. It returns structured numpy arrays that can
+    be used for analysis, visualization, or further processing.
 
-    Supported attack methods: 'cwL0', 'cwL2', 'cwLinf', 'deepfool', 'fgsm', 'pgd'
+    Main parameters:
+        adversarial_generator: ART-compatible classifier implementing predict()
+                               (and optionally loss_gradient()). Must be compatible with ART attacks.
+        methods: List (or tuple) of attacks. Elements can be EvasionAttack instances or classes
+                 that will be instantiated. ART attacks (art.attacks.evasion.*) are recommended.
+        compute_differences (bool): Whether to compute difference maps. Default: True.
+        difference_calculation (str|callable): Method to compute per-pixel differences:
+            - 'MAE'   : Mean Absolute Error (|adv - orig|)
+            - 'MSE'   : Mean Squared Error ((adv - orig)**2)
+            - 'RMSE'  : Root Mean Square Error (sqrt(MSE))
+            - 'COSINE': 1 - cosine_similarity (cosine distance)
+            - 'GMD'   : Gradient Magnitude Difference (perceptual metric)
+          A custom callable f(adv, orig) -> image is also accepted.
+        scaler: Scaler to normalize difference maps: MinMaxScaler(), StandardScaler(),
+                RobustScaler() or None. Default: MinMaxScaler().
+        clipping_range: Tuple (min, max) to clip pixel values. None disables clipping.
+                        Default: (0.0, 1.0).
+        max_iter: Maximum iterations for iterative attacks. Default: 10.
 
-    Supported difference calculations:
-    - 'MAE': Mean Absolute Error (MAE) - L1 distance
-    - 'MSE': Mean Squared Error (MSE) - L2 distance squared
-    - 'RMSE': Root Mean Square Error - square root of MSE
-    - 'COSINE': Cosine distance - 1 minus cosine similarity
-    - 'GMD': Gradient Magnitude Difference - perceptual quality metric
+    Behavior and validations:
+        - If methods is not a list/tuple, a TypeError is raised.
+        - Classes provided in methods are attempted to be instantiated; if instantiation fails,
+          a TypeError is raised.
+        - If adversarial_generator does not implement predict(), a TypeError is raised.
+        - A custom difference function must accept two images and return an image with the same
+          shape as the expected difference map.
+        - For attack-specific issues, consult ART implementations or open an issue.
+
+    Notes:
+        - All returned difference maps are in RGB format (H, W, C)
+        - Color transformations (e.g., to grayscale) should be applied during visualization in Plotter
     """
 
     def __init__(
@@ -35,50 +56,14 @@ class AdversarialExplainer:
         adversarial_generator,
         methods: List[EvasionAttack],
         # Preferences
-        plot_difference: bool = True,
+        compute_differences: bool = True,
         difference_calculation: METHODS | Callable = "MAE",
-        cmap: CMAP = "RGB",
         # Normalization
         scaler: MinMaxScaler | StandardScaler | RobustScaler | None = MinMaxScaler(),
         clipping_range: tuple[float, float] | None = (0.0, 1.0),
         # ART Configuration
         max_iter: int = 10,
     ) -> None:
-        """
-        Initialize the AdversarialExplainer with configuration parameters.
-
-        Args:
-            adversarial_generator: A trained classifier with predict() and loss_gradient() methods.
-                                 Must be compatible with ART's attack implementations.
-
-            methods: List of adversarial attack evasion classes, from art.attack.evasion import *
-
-            plot_difference: If True, displays difference maps between original and adversarial images.
-                           Defaults to True.
-
-            difference_calculation: Method for calculating pixel-wise differences. Options:
-                - 'MAE': |adv - orig| (Mean Absolute Error)
-                - 'MSE': (adv - orig)² (Mean Squared Error)
-                - 'RMSE': √((adv - orig)²) (Root Mean Square Error)
-                - 'COSINE': 1 - cosine_similarity (cosine distance)
-                - 'GMD': Gradient Magnitude Difference (perceptual quality metric)
-                Defaults to 'MAE'.
-
-                Also, you can add a custom function, but it must have as input 2 images and output a image.
-                If you are using a custom function, the CMAP will not work, you must transform it at your own.
-
-            scaler: Scaler for normalizing difference maps. Options: MinMaxScaler(),
-                   StandardScaler(), RobustScaler(), or None. Defaults to MinMaxScaler().
-
-            clipping_range: Tuple (min, max) for clipping pixel values. None disables clipping.
-                          Defaults to (0.0, 1.0).
-
-            max_iter: Maximum iterations for iterative attack methods. Defaults to 10.
-
-        Raises:
-            ValueError: If methods contains unsupported attack types.
-            TypeError: If adversarial_generator lacks required methods.
-        """
         if not isinstance(methods, (list, tuple)):
             raise TypeError(
                 "methods must be a list or tuple of EvasionAttack instances or EvasionAttack classes"
@@ -109,173 +94,190 @@ class AdversarialExplainer:
 
         self.adversarial_generator: Any = adversarial_generator
         self.methods: List[EvasionAttack] = methods
-        self.plot_difference: bool = plot_difference
+        self.compute_differences: bool = compute_differences
         self.difference_calculation: METHODS | Callable = difference_calculation
         self.scaler: MinMaxScaler | StandardScaler | RobustScaler | None = scaler
         self.clipping_range: tuple[float, float] | None = clipping_range
         self.max_iter: int = max_iter
-        self.cmap: CMAP = cmap
 
     def explain(
         self,
         input_imgs: np.ndarray,
         ground_truth: np.ndarray | None = None,
-        predict_labels: bool = False,
-    ) -> None:
+    ) -> dict[str, np.ndarray]:
         """
-        Visualize adversarial examples generated by multiple attack methods on input images.
+        Generate adversarial examples and compute differences across multiple attack methods.
 
         This method generates adversarial examples using the attack methods specified during
-        initialization and creates a comprehensive visualization showing the original images,
-        adversarial variants, their differences, and a summary of aggregated differences across
-        all attack methods.
+        initialization and computes per-pixel differences between original and adversarial images.
+
+        Args:
+            input_imgs (np.ndarray): Input images with shape (n_images, height, width, channels).
+            ground_truth (np.ndarray, optional): Ground truth labels for each image. Shape: (n_images,).
+
+        Returns:
+            dict[str, np.ndarray]: Dictionary containing:
+                - 'originals': Original input images. Shape: (n_images, height, width, channels)
+                - 'adversarials': Adversarial examples. Shape: (n_images, n_methods, height, width, channels)
+                - 'differences': Difference maps. Shape: (n_images, n_methods, height, width, channels)
+                  Only present if compute_differences=True.
+                - 'aggregated': Sum of differences across all methods. Shape: (n_images, height, width, channels)
+                  Only present if compute_differences=True.
+                - 'predictions': Predicted labels for adversarial examples. Shape: (n_images, n_methods)
+                - 'ground_truth': Ground truth labels (if provided). Shape: (n_images,)
+                - 'method_names': List of attack method names. Length: n_methods
+
+        Raises:
+            TypeError: If input_imgs is not a numpy ndarray or adversarial_generator cannot predict.
+            ValueError: If input_imgs contains no images.
         """
 
-        # Input validation: Type checking
+        # Input validation
+        self._validate_input(input_imgs)
+
+        n_images = input_imgs.shape[0]
+        n_methods = len(self.methods)
+        img_shape = input_imgs.shape[1:]
+
+        # Initialize output dictionary
+        results = self._initialize_results(n_images, n_methods, img_shape, ground_truth)
+
+        # Process each image
+        for i in tqdm(range(n_images), desc="Generating adversarial images"):
+            self._process_image(i, input_imgs[i], results)
+
+        return results
+
+    def _validate_input(self, input_imgs: np.ndarray) -> None:
+        """Validate input images."""
         if not isinstance(input_imgs, np.ndarray):
             raise TypeError(
                 f"input_imgs must be a numpy ndarray, got {type(input_imgs).__name__}"
             )
 
-        # Input validation: Check if there are images to process
         if input_imgs.shape[0] == 0:
             raise ValueError(
-                "input_imgs must contain at least one image to visualize. "
+                "input_imgs must contain at least one image. "
                 f"Got shape with 0 images: {input_imgs.shape}"
             )
 
-        # Calculate plot dimensions
-        cols_per_method = 1 + (1 if self.plot_difference else 0)
-        num_figures = (
-            1 + len(self.methods) * cols_per_method + (1 if self.plot_difference else 0)
-        )
+    def _initialize_results(
+        self,
+        n_images: int,
+        n_methods: int,
+        img_shape: tuple,
+        ground_truth: np.ndarray | None,
+    ) -> dict[str, np.ndarray]:
+        """Initialize results dictionary with correct shapes."""
+        results = {
+            "originals": np.zeros((n_images, *img_shape)),
+            "adversarials": np.zeros((n_images, n_methods, *img_shape)),
+            "predictions": np.zeros((n_images, n_methods), dtype=np.int64),
+            "method_names": [method.__class__.__name__ for method in self.methods],
+        }
 
-        # Create figure and axes
-        fig, axes = plt.subplots(
-            nrows=input_imgs.shape[0],
-            ncols=num_figures,
-            figsize=(3 * num_figures, 3 * input_imgs.shape[0]),
-        )
+        if self.compute_differences:
+            results["differences"] = np.zeros((n_images, n_methods, *img_shape))
+            results["aggregated"] = np.zeros((n_images, *img_shape))
 
-        # Process each image
-        for i in tqdm(range(input_imgs.shape[0]), desc="Generating adversarial images"):
-            # Clip input image if necessary
-            if self.clipping_range is not None:
-                input_imgs[i] = np.clip(
-                    input_imgs[i], self.clipping_range[0], self.clipping_range[1]
-                )
+        if ground_truth is not None:
+            results["ground_truth"] = ground_truth
 
-            # Display original image
-            axes[i, 0].imshow(input_imgs[i])
-            axes[i, 0].set_title("Original Image", fontweight="bold")
+        return results
 
-            # Add ground truth label if provided
-            if ground_truth is not None:
-                axes[i, 0].set_xlabel(f"GT: {ground_truth[i]}", fontsize=9)
+    def _process_image(
+        self,
+        img_idx: int,
+        input_img: np.ndarray,
+        results: dict[str, np.ndarray],
+    ) -> None:
+        """Process a single image: clip, generate adversarials, and compute differences."""
+        clipped_input = self._clip_image(input_img)
+        results["originals"][img_idx] = clipped_input
 
-            axes[i, 0].set_xticks([])
-            axes[i, 0].set_yticks([])
+        all_differences = []
 
-            # Store differences for aggregation at the end
-            all_differences = []
+        for method_idx, method in enumerate(self.methods):
+            adversarial_img = self._generate_adversarial(method, clipped_input)
+            results["adversarials"][img_idx, method_idx] = adversarial_img
 
-            # Generate adversarial examples for each method
-            for j, method in enumerate(self.methods):
-                # Generate adversarial example
-                selected_img = input_imgs[i : i + 1]
-                # Get attack instance for this method
-                adversarial_img = method.generate(x=selected_img)
+            # Get prediction
+            pred = self.adversarial_generator.predict(adversarial_img[np.newaxis, ...])
+            results["predictions"][img_idx, method_idx] = np.argmax(pred, axis=1)[0]
 
-                # Clip adversarial image if necessary
-                if self.clipping_range is not None:
-                    adversarial_img = np.clip(
-                        adversarial_img,
-                        self.clipping_range[0],
-                        self.clipping_range[1],
-                    )
+            # Compute differences
+            if self.compute_differences:
+                difference = self._compute_difference(adversarial_img, clipped_input)
+                results["differences"][img_idx, method_idx] = difference
+                all_differences.append(difference)
 
-                # Display adversarial image
-                adv_col = 1 + j * cols_per_method
-                axes[i, adv_col].imshow(adversarial_img[0])
-                axes[i, adv_col].set_title(
-                    f"Adversarial ({method.__class__.__name__})", fontweight="bold"
-                )
+        # Aggregate differences
+        if self.compute_differences and all_differences:
+            aggregated = self._aggregate_differences(all_differences)
+            results["aggregated"][img_idx] = aggregated
 
-                # Add predicted label if requested
-                if predict_labels:
-                    pred_label = np.argmax(
-                        self.adversarial_generator.predict(adversarial_img), axis=1
-                    )[0]
-                    axes[i, adv_col].set_xlabel(f"Pred: {pred_label}", fontsize=9)
+    def _clip_image(self, image: np.ndarray) -> np.ndarray:
+        """Clip image to specified range."""
+        if self.clipping_range is None:
+            return image.copy()
+        return np.clip(image, self.clipping_range[0], self.clipping_range[1])
 
-                axes[i, adv_col].set_xticks([])
-                axes[i, adv_col].set_yticks([])
+    def _generate_adversarial(self, method, clipped_input: np.ndarray) -> np.ndarray:
+        """Generate adversarial example and return clipped version."""
+        selected_img = clipped_input[np.newaxis, ...]
+        adversarial_img = method.generate(x=selected_img)[0]
 
-                # Calculate and display difference map
-                if self.plot_difference:
-                    # Compute difference using the configured calculation method
-                    if not callable(
-                        self.difference_calculation
-                    ):  # Use a pre-distance calculation
-                        difference = ImageComparator().compare(
-                            adversarial_img[0],
-                            selected_img[0],
-                            method=self.difference_calculation,
-                            cmap=self.cmap,
-                        )
-                    else:
-                        difference = self.difference_calculation(
-                            adversarial_img[0], selected_img[0]
-                        )  # Uses a custom calculation
+        if self.clipping_range is not None:
+            adversarial_img = np.clip(
+                adversarial_img,
+                self.clipping_range[0],
+                self.clipping_range[1],
+            )
 
-                    # Normalize difference using configured scaler
-                    if self.scaler is not None:
-                        difference = self.scaler.fit_transform(
-                            difference.reshape(-1, 1)
-                        ).reshape(difference.shape)
+        return adversarial_img
 
-                    # Clip difference if necessary
-                    if self.clipping_range is not None:
-                        difference = np.clip(
-                            difference, self.clipping_range[0], self.clipping_range[1]
-                        )
+    def _compute_difference(
+        self, adversarial_img: np.ndarray, original_img: np.ndarray
+    ) -> np.ndarray:
+        """Compute and normalize difference between adversarial and original image."""
+        # Compute difference using configured method
+        if callable(self.difference_calculation):
+            difference = self.difference_calculation(adversarial_img, original_img)
+        else:
+            difference = ImageComparator().compare(
+                adversarial_img,
+                original_img,
+                method=self.difference_calculation,
+            )
 
-                    all_differences.append(difference)
+        # Normalize using scaler
+        if self.scaler is not None:
+            difference = self.scaler.fit_transform(difference.reshape(-1, 1)).reshape(
+                difference.shape
+            )
 
-                    # Display difference map
-                    diff_col = adv_col + 1
-                    axes[i, diff_col].imshow(difference, cmap="hot")
-                    axes[i, diff_col].set_title(
-                        f"Difference ({method.__class__.__name__})", fontweight="bold"
-                    )
-                    axes[i, diff_col].set_xticks([])
-                    axes[i, diff_col].set_yticks([])
+        # Clip difference
+        if self.clipping_range is not None:
+            difference = np.clip(
+                difference, self.clipping_range[0], self.clipping_range[1]
+            )
 
-            # Display aggregated differences across all methods
-            if self.plot_difference and all_differences:
-                summed_differences = np.sum(all_differences, axis=0)
+        return difference
 
-                # Normalize aggregated differences
-                if self.scaler is not None:
-                    summed_differences = self.scaler.fit_transform(
-                        summed_differences.reshape(-1, 1)
-                    ).reshape(summed_differences.shape)
+    def _aggregate_differences(self, differences: list) -> np.ndarray:
+        """Aggregate and normalize differences across methods."""
+        aggregated = np.sum(differences, axis=0)
 
-                # Clip aggregated differences
-                if self.clipping_range is not None:
-                    summed_differences = np.clip(
-                        summed_differences,
-                        self.clipping_range[0],
-                        self.clipping_range[1],
-                    )
+        if self.scaler is not None:
+            aggregated = self.scaler.fit_transform(aggregated.reshape(-1, 1)).reshape(
+                aggregated.shape
+            )
 
-                # Display sum of differences
-                sum_col = num_figures - 1
-                axes[i, sum_col].imshow(summed_differences, cmap="hot")
-                axes[i, sum_col].set_title("Sum of Differences", fontweight="bold")
-                axes[i, sum_col].set_xticks([])
-                axes[i, sum_col].set_yticks([])
+        if self.clipping_range is not None:
+            aggregated = np.clip(
+                aggregated,
+                self.clipping_range[0],
+                self.clipping_range[1],
+            )
 
-        # Apply tight layout and display
-        plt.tight_layout()
-        plt.show()
+        return aggregated
