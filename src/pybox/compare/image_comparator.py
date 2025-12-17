@@ -3,6 +3,7 @@ import numpy as np
 
 METHODS = Literal["MAE", "MSE", "RMSE", "COSINE", "GMD"]
 
+
 class ImageComparator:
     def __init__(self):
         """Initialize the ImageComparator."""

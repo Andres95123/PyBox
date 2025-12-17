@@ -465,11 +465,6 @@ class Plotter:
             if not is_grayscale and n_channels == 3:
                 # RGB image with colormap requested - convert to grayscale first
                 img_gray = Plotter._rgb_to_grayscale(img_to_plot)
-                warnings.warn(
-                    f"Applied colormap '{cmap}' to RGB image. "
-                    "Image was converted to grayscale using standard luminance formula.",
-                    UserWarning,
-                )
                 ax.imshow(img_gray, cmap=cmap)
             else:
                 # Grayscale image or single-channel - apply colormap directly
@@ -485,9 +480,6 @@ class Plotter:
 
     @staticmethod
     def _rgb_to_grayscale(rgb_image: np.ndarray) -> np.ndarray:
-        """Convert RGB image to grayscale using standard luminance formula."""
-        return (
-            0.299 * rgb_image[:, :, 0]
-            + 0.587 * rgb_image[:, :, 1]
-            + 0.114 * rgb_image[:, :, 2]
-        )
+        """Convert RGB image to grayscale using the mean of dimensions. A machine learning model
+        don't has the human limitations, so the luminance formula is not correct to use"""
+        return np.mean(rgb_image, axis=2)
