@@ -181,7 +181,10 @@ class AdversarialExplainer:
         # Process each image
         for i in tqdm(range(n_images), desc="Generating adversarial images"):
             target_class = targets[i] if targets is not None else None
-            self._process_image(i, input_imgs[i], results, target_class, active_methods)
+            gt_label = ground_truth[i] if ground_truth is not None else None
+            self._process_image(
+                i, input_imgs[i], results, target_class, active_methods, gt_label
+            )
 
         return results
 
@@ -260,6 +263,7 @@ class AdversarialExplainer:
         results: dict[str, np.ndarray],
         target_class: int | None = None,
         methods: List[EvasionAttack] | None = None,
+        ground_truth_label: int | None = None,
     ) -> None:
         """Process a single image: clip, generate adversarials, and compute differences."""
         if methods is None:
@@ -298,7 +302,10 @@ class AdversarialExplainer:
                 success = pred_label == target_class
             else:
                 # Untargeted attack: success if prediction differs from original
-                success = pred_label != original_pred
+                if ground_truth_label is not None:
+                    success = pred_label != ground_truth_label
+                else:
+                    success = pred_label != original_pred
 
             # Compute differences
             if self.compute_differences:
