@@ -19,7 +19,16 @@ dependencies = [
 "Issues" = "https://github.com/Andres95123/PyBox/issues"
 
 [dependency-groups]
-dev = ["mkdocs>=1.6.1", "pytest>=9.0.1", "ruff>=0.14.7"]
+dev = [
+    "mkdocs>=1.6.1",
+    "pytest>=9.0.1",
+    "ruff>=0.14.7",
+    "mkdocs-material",
+    "mkdocstrings[python]",
+    "torch>=2.9.1",
+    "torchvision>=0.24.1",
+    "ipykernel>=7.1.0",
+]
 
 [tool.uv.workspace]
 members = ["."]
