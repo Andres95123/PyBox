@@ -3,7 +3,7 @@ Adversarial Engine.
 Orchestrates the generation of adversarial examples and checking of metrics.
 """
 
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Callable
 import numpy as np
 from tqdm import tqdm
 
@@ -20,7 +20,7 @@ class AdversarialEngine:
         self,
         classifier: Any,
         attacks: List[AttackStrategy],
-        metric: MetricStrategy,
+        metric: MetricStrategy | Callable[[np.ndarray, np.ndarray], np.ndarray],
         clip_values: tuple[float, float] | None = (0.0, 1.0),
     ):
         """
@@ -29,12 +29,25 @@ class AdversarialEngine:
         Args:
             classifier: The classifier to attack (must have predict method).
             attacks: List of attack strategies.
-            metric: Metric strategy to evaluate differences.
+            metric: Metric strategy to evaluate differences. If a callable is provided, it will be wrapped automatically.
             clip_values: Range to clip images (min, max).
         """
         self.classifier = classifier
         self.attacks = attacks
-        self.metric = metric
+
+        # Support callable metrics by wrapping
+        if callable(metric) and not isinstance(metric, MetricStrategy):
+            class CallableMetricAdapter:
+                def __init__(self, func):
+                    self.func = func
+
+                def calculate(self, original, adversarial):
+                    return self.func(original, adversarial)
+
+            self.metric = CallableMetricAdapter(metric)
+        else:
+            self.metric = metric
+
         self.clip_values = clip_values
 
     def run(
