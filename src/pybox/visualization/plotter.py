@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import numpy as np
 import warnings
+from typing import Any, Dict, List, Optional
 
 
 class Plotter:
@@ -25,6 +26,7 @@ class Plotter:
         figsize: tuple[int, int] | None = None,
         cmap: str = "hot",
         show: bool = True,
+        class_names: Dict[int, str] | None = None,
     ) -> Figure:
         """
         Create a comprehensive visualization of adversarial example analysis.
@@ -39,6 +41,8 @@ class Plotter:
                 Applied only to difference maps during visualization. Original and adversarial
                 images are always displayed in RGB.
             show (bool): Whether to display the plot. Default: True.
+            class_names (dict, optional): Dictionary mapping class indices to names.
+                Example: {0: 'cat', 1: 'dog'}.
 
         Returns:
             Figure: The matplotlib figure object.
@@ -103,6 +107,7 @@ class Plotter:
                 ground_truth,
                 predictions,
                 cmap,
+                class_names,
             )
 
         plt.tight_layout()
@@ -137,6 +142,7 @@ class Plotter:
         ground_truth: np.ndarray | None,
         predictions: np.ndarray | None,
         cmap: str,
+        class_names: Dict[int, str] | None = None,
     ) -> None:
         """Plot a single image row."""
         # Original image
@@ -144,7 +150,12 @@ class Plotter:
         self._plot_image(ax, originals[row_idx], title="Original")
 
         if ground_truth is not None:
-            ax.set_xlabel(f"GT: {ground_truth[row_idx]}", fontsize=9)
+            label = ground_truth[row_idx]
+            if class_names and label in class_names:
+                label_text = f"GT: {class_names[label]} ({label})"
+            else:
+                label_text = f"GT: {label}"
+            ax.set_xlabel(label_text, fontsize=9)
 
         # Adversarial and difference columns
         cols_per_method = 1 + (1 if differences is not None else 0)
@@ -160,6 +171,7 @@ class Plotter:
                 method_names,
                 predictions,
                 cmap,
+                class_names,
             )
 
         # Aggregated differences at the end
@@ -171,6 +183,7 @@ class Plotter:
                 aggregated[row_idx],
                 title="Sum of Differences",
                 cmap=cmap,
+                add_colorbar=True,
             )
 
     def _plot_method_columns(
@@ -184,6 +197,7 @@ class Plotter:
         method_names: list,
         predictions: np.ndarray | None,
         cmap: str,
+        class_names: Dict[int, str] | None = None,
     ) -> None:
         """Plot adversarial and difference columns for a method."""
         adv_col = 1 + method_idx * cols_per_method
@@ -200,7 +214,12 @@ class Plotter:
         )
 
         if predictions is not None:
-            ax.set_xlabel(f"Pred: {predictions[row_idx, method_idx]}", fontsize=9)
+            label = predictions[row_idx, method_idx]
+            if class_names and label in class_names:
+                label_text = f"Pred: {class_names[label]} ({label})"
+            else:
+                label_text = f"Pred: {label}"
+            ax.set_xlabel(label_text, fontsize=9)
 
         # Difference map
         if differences is not None:
@@ -211,6 +230,7 @@ class Plotter:
                 differences[row_idx, method_idx],
                 title=f"Difference ({method_name})",
                 cmap=cmap,
+                add_colorbar=True,
             )
 
     def plot_single(
@@ -220,6 +240,7 @@ class Plotter:
         figsize: tuple[int, int] | None = None,
         cmap: str = "hot",
         show: bool = True,
+        class_names: Dict[int, str] | None = None,
     ) -> Figure:
         """
         Create a visualization for a single image.
@@ -230,6 +251,7 @@ class Plotter:
             figsize (tuple, optional): Figure size as (width, height).
             cmap (str): Colormap for difference visualizations. Default: 'hot'.
             show (bool): Whether to display the plot. Default: True.
+            class_names (dict, optional): Dictionary mapping class indices to names.
 
         Returns:
             Figure: The matplotlib figure object.
@@ -266,7 +288,13 @@ class Plotter:
                 image_idx : image_idx + 1
             ]
 
-        return self.plot(single_result, figsize=figsize, cmap=cmap, show=show)
+        return self.plot(
+            single_result,
+            figsize=figsize,
+            cmap=cmap,
+            show=show,
+            class_names=class_names,
+        )
 
     def plot_comparison(
         self,
@@ -274,6 +302,7 @@ class Plotter:
         method_indices: list[int] | None = None,
         figsize: tuple[int, int] | None = None,
         show: bool = True,
+        class_names: Dict[int, str] | None = None,
     ) -> Figure:
         """
         Create a comparison plot for specific attack methods.
@@ -283,6 +312,7 @@ class Plotter:
             method_indices (list[int], optional): Indices of methods to compare. If None, plot all.
             figsize (tuple, optional): Figure size as (width, height).
             show (bool): Whether to display the plot. Default: True.
+            class_names (dict, optional): Dictionary mapping class indices to names.
 
         Returns:
             Figure: The matplotlib figure object.
@@ -330,6 +360,7 @@ class Plotter:
                     method_names,
                     predictions,
                     adversarials,
+                    class_names,
                 )
 
         plt.tight_layout()
@@ -350,6 +381,7 @@ class Plotter:
         method_names: list,
         predictions: np.ndarray | None,
         adversarials: np.ndarray,
+        class_names: Dict[int, str] | None = None,
     ) -> None:
         """Helper method to plot a single cell in comparison plot."""
 
@@ -369,7 +401,12 @@ class Plotter:
         self._plot_image(ax, adversarials[row_idx, method_idx], title=f"{method_name}")
 
         if predictions is not None:
-            ax.set_xlabel(f"Pred: {predictions[row_idx, method_idx]}", fontsize=9)
+            label = predictions[row_idx, method_idx]
+            if class_names and label in class_names:
+                label_text = f"Pred: {class_names[label]} ({label})"
+            else:
+                label_text = f"Pred: {label}"
+            ax.set_xlabel(label_text, fontsize=9)
 
     @staticmethod
     def _plot_image(
@@ -377,6 +414,7 @@ class Plotter:
         image: np.ndarray,
         title: str = "",
         cmap: str | None = None,
+        add_colorbar: bool = False,
     ) -> None:
         """
         Helper method to plot an image on a matplotlib axis with colormap support.
@@ -396,6 +434,7 @@ class Plotter:
                 - For grayscale: 'gray' colormap
                 Any valid matplotlib colormap can be specified (e.g., 'hot', 'viridis', 'gray').
                 When a cmap is applied to RGB images, they are converted to grayscale first.
+            add_colorbar (bool, optional): Whether to add a colorbar to the plot. Default: False.
 
         Raises:
             ValueError: If image has invalid dimensions or channel count.
@@ -405,7 +444,14 @@ class Plotter:
         img_to_plot, is_grayscale, n_channels = Plotter._validate_image(image)
 
         # Apply visualization
-        Plotter._apply_visualization(ax, img_to_plot, is_grayscale, n_channels, cmap)
+        mappable = Plotter._apply_visualization(
+            ax, img_to_plot, is_grayscale, n_channels, cmap
+        )
+
+        if add_colorbar and mappable is not None:
+            # Add colorbar
+            # Use the figure from the axis to add colorbar
+            ax.figure.colorbar(mappable, ax=ax, fraction=0.046, pad=0.04)
 
         ax.set_title(title, fontweight="bold", fontsize=10)
         ax.set_xticks([])
@@ -458,25 +504,25 @@ class Plotter:
         is_grayscale: bool,
         n_channels: int,
         cmap: str | None,
-    ) -> None:
-        """Apply visualization with appropriate colormap handling."""
+    ) -> Any:
+        """Apply visualization with appropriate colormap handling and return the mappable."""
         if cmap is not None:
             # User specified a colormap
             if not is_grayscale and n_channels == 3:
                 # RGB image with colormap requested - convert to grayscale first
                 img_gray = Plotter._rgb_to_grayscale(img_to_plot)
-                ax.imshow(img_gray, cmap=cmap)
+                return ax.imshow(img_gray, cmap=cmap)
             else:
                 # Grayscale image or single-channel - apply colormap directly
-                ax.imshow(img_to_plot.squeeze(), cmap=cmap)
+                return ax.imshow(img_to_plot.squeeze(), cmap=cmap)
         else:
             # No colormap specified
             if is_grayscale:
                 # Display grayscale with 'gray' colormap
-                ax.imshow(img_to_plot, cmap="gray")
+                return ax.imshow(img_to_plot, cmap="gray")
             else:
                 # Display RGB naturally
-                ax.imshow(img_to_plot)
+                return ax.imshow(img_to_plot)
 
     @staticmethod
     def _rgb_to_grayscale(rgb_image: np.ndarray) -> np.ndarray:

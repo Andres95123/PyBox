@@ -1,6 +1,7 @@
 import numpy as np
 from art.attacks import EvasionAttack
 import inspect
+import warnings
 
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler
 from typing import List, Any, Callable
@@ -70,20 +71,30 @@ class AdversarialExplainer:
             )
 
         # Normalize methods: accept instances or classes (try to instantiate classes)
+        # Store both instances and their metadata for re-instantiation
         normalized_methods = []
+        method_metadata = []  # Store original classes and init params
+
         for m in methods:
             if inspect.isclass(m):
+                # Store the class for later re-instantiation with different params
+                method_class = m
                 try:
                     m = m(adversarial_generator, verbose=False)
                 except Exception as e:
                     raise TypeError(
                         f"Failed to instantiate attack class {getattr(m, '__name__', str(m))}: {e}"
                     )
+            else:
+                # Instance provided - try to get its class
+                method_class = type(m)
+
             if not hasattr(m, "generate"):
                 raise TypeError(
                     f"Each element in 'methods' must be an instance of ART EvasionAttack (or a class that can be instantiated), got {type(m).__name__}"
                 )
             normalized_methods.append(m)
+            method_metadata.append(method_class)
 
         methods = normalized_methods
 
@@ -94,6 +105,7 @@ class AdversarialExplainer:
 
         self.adversarial_generator: Any = adversarial_generator
         self.methods: List[EvasionAttack] = methods
+        self.method_metadata: List[type] = method_metadata
         self.compute_differences: bool = compute_differences
         self.difference_calculation: METHODS | Callable = difference_calculation
         self.scaler: MinMaxScaler | StandardScaler | RobustScaler | None = scaler
@@ -104,6 +116,7 @@ class AdversarialExplainer:
         self,
         input_imgs: np.ndarray,
         ground_truth: np.ndarray | None = None,
+        target_y: int | np.ndarray | None = None,
     ) -> dict[str, np.ndarray]:
         """
         Generate adversarial examples and compute differences across multiple attack methods.
@@ -114,6 +127,10 @@ class AdversarialExplainer:
         Args:
             input_imgs (np.ndarray): Input images with shape (n_images, height, width, channels).
             ground_truth (np.ndarray, optional): Ground truth labels for each image. Shape: (n_images,).
+            target_y (int | np.ndarray, optional): Target label(s) for targeted attacks.
+                If int, attempts to misclassify all images to this class.
+                If np.ndarray, must match shape (n_images,), providing a target for each image.
+                If None, performs untargeted attacks (default behavior).
 
         Returns:
             dict[str, np.ndarray]: Dictionary containing:
@@ -139,12 +156,32 @@ class AdversarialExplainer:
         n_methods = len(self.methods)
         img_shape = input_imgs.shape[1:]
 
+        # Validate target_y if provided
+        targets = None
+        active_methods = self.methods
+
+        if target_y is not None:
+            if isinstance(target_y, (int, np.integer)):
+                targets = np.full(n_images, target_y, dtype=np.int64)
+            elif isinstance(target_y, np.ndarray):
+                if target_y.shape[0] != n_images:
+                    raise ValueError(
+                        f"target_y array shape {target_y.shape} does not match number of images ({n_images})"
+                    )
+                targets = target_y.astype(np.int64)
+            else:
+                raise TypeError("target_y must be an int or a numpy array.")
+
+            # Re-instantiate methods with targeted=True
+            active_methods = self._create_targeted_methods()
+
         # Initialize output dictionary
         results = self._initialize_results(n_images, n_methods, img_shape, ground_truth)
 
         # Process each image
         for i in tqdm(range(n_images), desc="Generating adversarial images"):
-            self._process_image(i, input_imgs[i], results)
+            target_class = targets[i] if targets is not None else None
+            self._process_image(i, input_imgs[i], results, target_class, active_methods)
 
         return results
 
@@ -160,6 +197,37 @@ class AdversarialExplainer:
                 "input_imgs must contain at least one image. "
                 f"Got shape with 0 images: {input_imgs.shape}"
             )
+
+    def _create_targeted_methods(self) -> List[EvasionAttack]:
+        """Re-instantiate methods with targeted=True for targeted attacks."""
+        targeted_methods = []
+        for method_class in self.method_metadata:
+            try:
+                # Try to create with targeted=True
+                # Check if the constructor accepts 'targeted' parameter
+                sig = inspect.signature(method_class.__init__)
+                if "targeted" in sig.parameters:
+                    targeted_method = method_class(
+                        self.adversarial_generator, targeted=True, verbose=False
+                    )
+                else:
+                    # Method doesn't support targeted attacks, use original
+                    warnings.warn(
+                        f"{method_class.__name__} does not support targeted attacks. "
+                        f"Results may not match the target class.",
+                        UserWarning,
+                    )
+                    # Use the original instance
+                    targeted_method = self.methods[len(targeted_methods)]
+                targeted_methods.append(targeted_method)
+            except Exception as e:
+                warnings.warn(
+                    f"Failed to create targeted version of {method_class.__name__}: {e}. "
+                    f"Using untargeted version.",
+                    UserWarning,
+                )
+                targeted_methods.append(self.methods[len(targeted_methods)])
+        return targeted_methods
 
     def _initialize_results(
         self,
@@ -190,26 +258,59 @@ class AdversarialExplainer:
         img_idx: int,
         input_img: np.ndarray,
         results: dict[str, np.ndarray],
+        target_class: int | None = None,
+        methods: List[EvasionAttack] | None = None,
     ) -> None:
         """Process a single image: clip, generate adversarials, and compute differences."""
+        if methods is None:
+            methods = self.methods
+
         clipped_input = self._clip_image(input_img)
         results["originals"][img_idx] = clipped_input
 
+        # Get original prediction for success check
+        if target_class is None:
+            orig_pred_prob = self.adversarial_generator.predict(
+                clipped_input[np.newaxis, ...]
+            )
+            original_pred = np.argmax(orig_pred_prob, axis=1)[0]
+        else:
+            original_pred = None  # Not needed for targeted check
+
         all_differences = []
 
-        for method_idx, method in enumerate(self.methods):
-            adversarial_img = self._generate_adversarial(method, clipped_input)
+        for method_idx, method in enumerate(methods):
+            adversarial_img = self._generate_adversarial(
+                method, clipped_input, target_class
+            )
             results["adversarials"][img_idx, method_idx] = adversarial_img
 
             # Get prediction
-            pred = self.adversarial_generator.predict(adversarial_img[np.newaxis, ...])
-            results["predictions"][img_idx, method_idx] = np.argmax(pred, axis=1)[0]
+            pred_prob = self.adversarial_generator.predict(
+                adversarial_img[np.newaxis, ...]
+            )
+            pred_label = np.argmax(pred_prob, axis=1)[0]
+            results["predictions"][img_idx, method_idx] = pred_label
+
+            # Determine success
+            if target_class is not None:
+                # Targeted attack: success if prediction matches target
+                success = pred_label == target_class
+            else:
+                # Untargeted attack: success if prediction differs from original
+                success = pred_label != original_pred
 
             # Compute differences
             if self.compute_differences:
-                difference = self._compute_difference(adversarial_img, clipped_input)
-                results["differences"][img_idx, method_idx] = difference
-                all_differences.append(difference)
+                if success:
+                    difference = self._compute_difference(
+                        adversarial_img, clipped_input
+                    )
+                    results["differences"][img_idx, method_idx] = difference
+                    all_differences.append(difference)
+                else:
+                    # If failed, leave as zeros (default) and do not add to aggregation
+                    pass
 
         # Aggregate differences
         if self.compute_differences and all_differences:
@@ -222,10 +323,20 @@ class AdversarialExplainer:
             return image.copy()
         return np.clip(image, self.clipping_range[0], self.clipping_range[1])
 
-    def _generate_adversarial(self, method, clipped_input: np.ndarray) -> np.ndarray:
+    def _generate_adversarial(
+        self, method, clipped_input: np.ndarray, target_y: int | None = None
+    ) -> np.ndarray:
         """Generate adversarial example and return clipped version."""
         selected_img = clipped_input[np.newaxis, ...]
-        adversarial_img = method.generate(x=selected_img)[0]
+
+        if target_y is not None:
+            # For targeted attacks, pass the target class to generate()
+            # ART expects y as indices array
+            y = np.array([target_y], dtype=np.int64)
+            adversarial_img = method.generate(x=selected_img, y=y)[0]
+        else:
+            # Untargeted attack
+            adversarial_img = method.generate(x=selected_img)[0]
 
         if self.clipping_range is not None:
             adversarial_img = np.clip(
