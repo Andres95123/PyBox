@@ -1,531 +1,205 @@
-import matplotlib.pyplot as plt
+﻿import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import numpy as np
-import warnings
-from typing import Any, Dict, List, Optional
+from typing import List, Dict, Optional
+from ..core.models import ExperimentResult
 
 
 class Plotter:
     """
-    Plotter: Visualize adversarial example analysis results using matplotlib.
-
-    This class takes the output from AdversarialExplainer.explain() and creates
-    comprehensive visualizations showing original images, adversarial variants,
-    difference maps, and aggregated differences across attack methods.
-
-    The output is organized in a grid where each row represents an image and
-    each column represents different components (original, adversarials, differences, aggregated).
+    Visualize adversarial results matching the specific style requested.
     """
-
-    def __init__(self) -> None:
-        """Initialize the Plotter."""
 
     def plot(
         self,
-        explain_results: dict,
-        figsize: tuple[int, int] | None = None,
+        results: List[ExperimentResult],
+        figsize: Optional[tuple] = None,
         cmap: str = "hot",
         show: bool = True,
-        class_names: Dict[int, str] | None = None,
-    ) -> Figure:
-        """
-        Create a comprehensive visualization of adversarial example analysis.
+        class_names: Optional[Dict[int, str]] = None,
+    ) -> Optional[Figure]:
+        if not results:
+            return None
 
-        Args:
-            explain_results (dict): Output dictionary from AdversarialExplainer.explain()
-                containing 'originals', 'adversarials', 'differences', 'aggregated', etc.
-            figsize (tuple, optional): Figure size as (width, height). If None, automatically
-                calculated as (3 * num_cols, 3 * num_rows).
-            cmap (str): Colormap for difference visualizations. Default: 'hot'.
-                Can be any valid matplotlib colormap (e.g., 'hot', 'viridis', 'gray', etc.).
-                Applied only to difference maps during visualization. Original and adversarial
-                images are always displayed in RGB.
-            show (bool): Whether to display the plot. Default: True.
-            class_names (dict, optional): Dictionary mapping class indices to names.
-                Example: {0: 'cat', 1: 'dog'}.
+        n_images = len(results)
+        # Determine number of attacks from the first result
+        first_result = results[0]
+        n_attacks = len(first_result.attacks)
 
-        Returns:
-            Figure: The matplotlib figure object.
-
-        Raises:
-            ValueError: If explain_results is missing required keys or has incompatible shapes.
-        """
-
-        # Validate input
-        if not isinstance(explain_results, dict):
-            raise ValueError(
-                "explain_results must be a dictionary from AdversarialExplainer.explain()"
-            )
-
-        required_keys = {"originals", "adversarials"}
-        if not required_keys.issubset(explain_results.keys()):
-            raise ValueError(f"explain_results must contain keys: {required_keys}")
-
-        originals = explain_results["originals"]
-        adversarials = explain_results["adversarials"]
-        differences = explain_results.get("differences", None)
-        aggregated = explain_results.get("aggregated", None)
-        method_names = explain_results.get("method_names", [])
-        ground_truth = explain_results.get("ground_truth", None)
-        predictions = explain_results.get("predictions", None)
-
-        n_images, n_methods = adversarials.shape[0], adversarials.shape[1]
-
-        # Calculate number of columns
-        # Layout: Original | [Adversarial_1, Diff_1] | [Adversarial_2, Diff_2] | ... | Aggregated
-        cols_per_method = 1 + (1 if differences is not None else 0)
-        num_cols = (
-            1 + n_methods * cols_per_method + (1 if aggregated is not None else 0)
+        # Check if we should plot difference maps (if any attack has one)
+        has_diffs = any(
+            atk.difference_map is not None for res in results for atk in res.attacks
         )
 
-        # Calculate figure size
+        # Only show aggregated diff if more than 1 attack
+        show_aggregated = has_diffs and n_attacks > 1
+
+        # Logic for columns: Original + (Adversarial + Diff) * n_attacks + Aggregated Diff
+        cols_per_attack = 2 if has_diffs else 1
+        n_cols = 1 + n_attacks * cols_per_attack + (1 if show_aggregated else 0)
+
         if figsize is None:
-            figsize = (3 * num_cols, 3 * n_images)
+            # Adjust figsize to look square-ish per subplot like in the image
+            figsize = (2.5 * n_cols, 2.5 * n_images)
 
-        # Create figure and axes
-        fig, axes = plt.subplots(
-            nrows=n_images,
-            ncols=num_cols,
-            figsize=figsize,
-        )
+        fig, axes = plt.subplots(n_images, n_cols, figsize=figsize, squeeze=False)
 
-        # Handle axes array conversion
-        axes = self._normalize_axes(axes, n_images, num_cols)
+        # Styling constants
+        FONT_SIZE_TITLE = 9
+        FONT_SIZE_LABEL = 8
 
-        # Process each image row
-        for i in range(n_images):
-            self._plot_row(
-                axes,
-                i,
-                num_cols,
-                n_methods,
-                originals,
-                adversarials,
-                differences,
-                aggregated,
-                method_names,
-                ground_truth,
-                predictions,
-                cmap,
-                class_names,
-            )
+        for idx, res in enumerate(results):
+            # ---------------------------------------------------------
+            # 1. Original Image
+            # ---------------------------------------------------------
+            ax = axes[idx, 0]
+            self._plot_image(ax, res.original_image)
+
+            # Title: "Original"
+            ax.set_title("Original", fontsize=FONT_SIZE_TITLE, fontweight="bold")
+
+            # XLabel: "GT: class_name (class_idx)"
+            gt_text = ""
+            if res.ground_truth is not None:
+                gt_name = (
+                    class_names.get(int(res.ground_truth), "?") if class_names else "?"
+                )
+                gt_text = f"GT: {gt_name} ({res.ground_truth})"
+
+            ax.set_xlabel(gt_text, fontsize=FONT_SIZE_LABEL)
+
+            diff_accumulator = []  # Store difference maps for aggregation
+
+            current_col = 1
+            for atk in res.attacks:
+                # ---------------------------------------------------------
+                # 2. Adversarial Image
+                # ---------------------------------------------------------
+                ax_adv = axes[idx, current_col]
+                self._plot_image(ax_adv, atk.adversarial_image)
+
+                # Title: "Adversarial (MethodName)"
+                ax_adv.set_title(
+                    f"Adversarial ({atk.method_name})",
+                    fontsize=FONT_SIZE_TITLE,
+                    fontweight="bold",
+                )
+
+                # XLabel: "Pred: class_name (class_idx)"
+                pred_name = (
+                    class_names.get(int(atk.prediction), "?") if class_names else "?"
+                )
+                pred_text = f"Pred: {pred_name} ({atk.prediction})"
+
+                ax_adv.set_xlabel(pred_text, fontsize=FONT_SIZE_LABEL)
+
+                current_col += 1
+
+                # ---------------------------------------------------------
+                # 3. Difference Map (Optional)
+                # ---------------------------------------------------------
+                if has_diffs:
+                    ax_diff = axes[idx, current_col]
+
+                    # Logic adjustment: Only show if attack was successful AND has actual differences
+                    should_show_diff = False
+                    if atk.success and (atk.difference_map is not None):
+                        # Check if the difference map has non-zero values
+                        if np.any(atk.difference_map > 0):
+                            should_show_diff = True
+
+                    if should_show_diff:
+                        im = self._plot_diff(ax_diff, atk.difference_map, cmap=cmap)
+
+                        # Collect for aggregation
+                        diff_accumulator.append(atk.difference_map)
+
+                        # Title: "Difference (MethodName)"
+                        ax_diff.set_title(
+                            f"Difference ({atk.method_name})",
+                            fontsize=FONT_SIZE_TITLE,
+                            fontweight="bold",
+                        )
+
+                        # Add colorbar
+                        cbar = plt.colorbar(im, ax=ax_diff, fraction=0.046, pad=0.04)
+                        cbar.ax.tick_params(labelsize=6)
+
+                    else:
+                        ax_diff.axis("off")  # Hide if no real difference
+
+                    current_col += 1
+
+            # ---------------------------------------------------------
+            # 4. Aggregated Difference Map (Last Column)
+            # ---------------------------------------------------------
+            if show_aggregated:
+                ax_agg = axes[idx, current_col]
+                if diff_accumulator:
+                    # Sum normalized difference maps
+                    # Assuming dimensions match.
+                    # If they are uint8 (0-255), sum might overflow if not careful, cast to float.
+                    total_diff = np.zeros_like(diff_accumulator[0], dtype=np.float32)
+                    for d in diff_accumulator:
+                        total_diff += d.astype(np.float32)
+
+                    # Normalize back to 0-255 for visualization
+                    max_val = total_diff.max()
+                    if max_val > 1e-7:
+                        total_diff = (total_diff / max_val) * 255.0
+
+                    total_diff = total_diff.astype(np.uint8)
+
+                    im = self._plot_diff(ax_agg, total_diff, cmap=cmap)
+                    ax_agg.set_title(
+                        "Aggregated Diff", fontsize=FONT_SIZE_TITLE, fontweight="bold"
+                    )
+                    cbar = plt.colorbar(im, ax=ax_agg, fraction=0.046, pad=0.04)
+                    cbar.ax.tick_params(labelsize=6)
+                else:
+                    ax_agg.axis("off")
 
         plt.tight_layout()
-
         if show:
             plt.show()
 
         return fig
 
-    def _normalize_axes(self, axes, n_images: int, num_cols: int) -> np.ndarray:
-        """Convert matplotlib axes to 2D numpy array."""
-        if n_images == 1 and num_cols == 1:
-            return np.array([[axes]])
-        elif n_images == 1:
-            return np.array([axes])
-        elif num_cols == 1:
-            return np.array([[ax] for ax in axes])
+    def _plot_image(self, ax, img: np.ndarray):
+        # Validate type
+        img_to_plot = img
+        if img.dtype != np.uint8 and img.max() > 1.0:
+            img_to_plot = img.astype(np.uint8)
+
+        if len(img_to_plot.shape) > 2 and img_to_plot.shape[-1] == 1:
+            ax.imshow(img_to_plot.squeeze(), cmap="gray")
         else:
-            return np.array(axes)
+            ax.imshow(img_to_plot)
 
-    def _plot_row(
-        self,
-        axes: np.ndarray,
-        row_idx: int,
-        num_cols: int,
-        n_methods: int,
-        originals: np.ndarray,
-        adversarials: np.ndarray,
-        differences: np.ndarray | None,
-        aggregated: np.ndarray | None,
-        method_names: list,
-        ground_truth: np.ndarray | None,
-        predictions: np.ndarray | None,
-        cmap: str,
-        class_names: Dict[int, str] | None = None,
-    ) -> None:
-        """Plot a single image row."""
-        # Original image
-        ax = axes[row_idx, 0]
-        self._plot_image(ax, originals[row_idx], title="Original")
-
-        if ground_truth is not None:
-            label = ground_truth[row_idx]
-            if class_names and label in class_names:
-                label_text = f"GT: {class_names[label]} ({label})"
-            else:
-                label_text = f"GT: {label}"
-            ax.set_xlabel(label_text, fontsize=9)
-
-        # Adversarial and difference columns
-        cols_per_method = 1 + (1 if differences is not None else 0)
-
-        for j in range(n_methods):
-            self._plot_method_columns(
-                axes,
-                row_idx,
-                j,
-                cols_per_method,
-                adversarials,
-                differences,
-                method_names,
-                predictions,
-                cmap,
-                class_names,
-            )
-
-        # Aggregated differences at the end
-        if aggregated is not None:
-            agg_col = num_cols - 1
-            ax = axes[row_idx, agg_col]
-            self._plot_image(
-                ax,
-                aggregated[row_idx],
-                title="Sum of Differences",
-                cmap=cmap,
-                add_colorbar=True,
-            )
-
-    def _plot_method_columns(
-        self,
-        axes: np.ndarray,
-        row_idx: int,
-        method_idx: int,
-        cols_per_method: int,
-        adversarials: np.ndarray,
-        differences: np.ndarray | None,
-        method_names: list,
-        predictions: np.ndarray | None,
-        cmap: str,
-        class_names: Dict[int, str] | None = None,
-    ) -> None:
-        """Plot adversarial and difference columns for a method."""
-        adv_col = 1 + method_idx * cols_per_method
-        method_name = (
-            method_names[method_idx]
-            if method_idx < len(method_names)
-            else f"Method {method_idx}"
-        )
-
-        # Adversarial image
-        ax = axes[row_idx, adv_col]
-        self._plot_image(
-            ax, adversarials[row_idx, method_idx], title=f"Adversarial ({method_name})"
-        )
-
-        if predictions is not None:
-            label = predictions[row_idx, method_idx]
-            if class_names and label in class_names:
-                label_text = f"Pred: {class_names[label]} ({label})"
-            else:
-                label_text = f"Pred: {label}"
-            ax.set_xlabel(label_text, fontsize=9)
-
-        # Difference map
-        if differences is not None:
-            diff_col = adv_col + 1
-            ax = axes[row_idx, diff_col]
-            self._plot_image(
-                ax,
-                differences[row_idx, method_idx],
-                title=f"Difference ({method_name})",
-                cmap=cmap,
-                add_colorbar=True,
-            )
-
-    def plot_single(
-        self,
-        image_idx: int,
-        explain_results: dict,
-        figsize: tuple[int, int] | None = None,
-        cmap: str = "hot",
-        show: bool = True,
-        class_names: Dict[int, str] | None = None,
-    ) -> Figure:
-        """
-        Create a visualization for a single image.
-
-        Args:
-            image_idx (int): Index of the image to plot.
-            explain_results (dict): Output dictionary from AdversarialExplainer.explain().
-            figsize (tuple, optional): Figure size as (width, height).
-            cmap (str): Colormap for difference visualizations. Default: 'hot'.
-            show (bool): Whether to display the plot. Default: True.
-            class_names (dict, optional): Dictionary mapping class indices to names.
-
-        Returns:
-            Figure: The matplotlib figure object.
-        """
-
-        n_images = explain_results["originals"].shape[0]
-        if not 0 <= image_idx < n_images:
-            raise ValueError(f"image_idx must be between 0 and {n_images - 1}")
-
-        # Create a single-image subset
-        single_result = {
-            "originals": explain_results["originals"][image_idx : image_idx + 1],
-            "adversarials": explain_results["adversarials"][image_idx : image_idx + 1],
-            "method_names": explain_results.get("method_names", []),
-        }
-
-        if "differences" in explain_results:
-            single_result["differences"] = explain_results["differences"][
-                image_idx : image_idx + 1
-            ]
-
-        if "aggregated" in explain_results:
-            single_result["aggregated"] = explain_results["aggregated"][
-                image_idx : image_idx + 1
-            ]
-
-        if "ground_truth" in explain_results:
-            single_result["ground_truth"] = explain_results["ground_truth"][
-                image_idx : image_idx + 1
-            ]
-
-        if "predictions" in explain_results:
-            single_result["predictions"] = explain_results["predictions"][
-                image_idx : image_idx + 1
-            ]
-
-        return self.plot(
-            single_result,
-            figsize=figsize,
-            cmap=cmap,
-            show=show,
-            class_names=class_names,
-        )
-
-    def plot_comparison(
-        self,
-        explain_results: dict,
-        method_indices: list[int] | None = None,
-        figsize: tuple[int, int] | None = None,
-        show: bool = True,
-        class_names: Dict[int, str] | None = None,
-    ) -> Figure:
-        """
-        Create a comparison plot for specific attack methods.
-
-        Args:
-            explain_results (dict): Output dictionary from AdversarialExplainer.explain().
-            method_indices (list[int], optional): Indices of methods to compare. If None, plot all.
-            figsize (tuple, optional): Figure size as (width, height).
-            show (bool): Whether to display the plot. Default: True.
-            class_names (dict, optional): Dictionary mapping class indices to names.
-
-        Returns:
-            Figure: The matplotlib figure object.
-        """
-
-        n_methods = explain_results["adversarials"].shape[1]
-        if method_indices is None:
-            method_indices = list(range(n_methods))
-
-        for idx in method_indices:
-            if not 0 <= idx < n_methods:
-                raise ValueError(
-                    f"method_indices must be between 0 and {n_methods - 1}"
-                )
-
-        n_images = explain_results["originals"].shape[0]
-
-        if figsize is None:
-            figsize = (5 * len(method_indices), 4 * n_images)
-
-        fig, axes = plt.subplots(
-            nrows=n_images,
-            ncols=len(method_indices),
-            figsize=figsize,
-        )
-
-        if n_images == 1:
-            axes = axes.reshape(1, -1)
-        elif len(method_indices) == 1:
-            axes = axes.reshape(-1, 1)
-
-        method_names = explain_results.get("method_names", [])
-        predictions = explain_results.get("predictions", None)
-        adversarials = explain_results["adversarials"]
-
-        for i in range(n_images):
-            for col_idx, method_idx in enumerate(method_indices):
-                self._plot_comparison_cell(
-                    axes,
-                    i,
-                    col_idx,
-                    n_images,
-                    len(method_indices),
-                    method_idx,
-                    method_names,
-                    predictions,
-                    adversarials,
-                    class_names,
-                )
-
-        plt.tight_layout()
-
-        if show:
-            plt.show()
-
-        return fig
-
-    def _plot_comparison_cell(
-        self,
-        axes: np.ndarray,
-        row_idx: int,
-        col_idx: int,
-        n_images: int,
-        n_cols: int,
-        method_idx: int,
-        method_names: list,
-        predictions: np.ndarray | None,
-        adversarials: np.ndarray,
-        class_names: Dict[int, str] | None = None,
-    ) -> None:
-        """Helper method to plot a single cell in comparison plot."""
-
-        if n_images == 1:
-            ax = axes[col_idx]
-        elif n_cols == 1:
-            ax = axes[row_idx]
-        else:
-            ax = axes[row_idx, col_idx]
-
-        method_name = (
-            method_names[method_idx]
-            if method_idx < len(method_names)
-            else f"Method {method_idx}"
-        )
-
-        self._plot_image(ax, adversarials[row_idx, method_idx], title=f"{method_name}")
-
-        if predictions is not None:
-            label = predictions[row_idx, method_idx]
-            if class_names and label in class_names:
-                label_text = f"Pred: {class_names[label]} ({label})"
-            else:
-                label_text = f"Pred: {label}"
-            ax.set_xlabel(label_text, fontsize=9)
-
-    @staticmethod
-    def _plot_image(
-        ax,
-        image: np.ndarray,
-        title: str = "",
-        cmap: str | None = None,
-        add_colorbar: bool = False,
-    ) -> None:
-        """
-        Helper method to plot an image on a matplotlib axis with colormap support.
-
-        Handles images with different channel counts:
-        - 2D (H, W): Grayscale image
-        - 3D with 1 channel (H, W, 1): Grayscale image
-        - 3D with 3 channels (H, W, 3): RGB image
-        - 3D with 4 channels (H, W, 4): ARGB image (alpha channel removed)
-
-        Args:
-            ax: Matplotlib axis object.
-            image (np.ndarray): Image array to plot. Expects shape (H, W) or (H, W, C).
-            title (str): Title for the subplot.
-            cmap (str, optional): Colormap to use. If None:
-                - For RGB images: No colormap (natural RGB display)
-                - For grayscale: 'gray' colormap
-                Any valid matplotlib colormap can be specified (e.g., 'hot', 'viridis', 'gray').
-                When a cmap is applied to RGB images, they are converted to grayscale first.
-            add_colorbar (bool, optional): Whether to add a colorbar to the plot. Default: False.
-
-        Raises:
-            ValueError: If image has invalid dimensions or channel count.
-            TypeError: If cmap is not a valid matplotlib colormap name.
-        """
-        # Validate and normalize image
-        img_to_plot, is_grayscale, n_channels = Plotter._validate_image(image)
-
-        # Apply visualization
-        mappable = Plotter._apply_visualization(
-            ax, img_to_plot, is_grayscale, n_channels, cmap
-        )
-
-        if add_colorbar and mappable is not None:
-            # Add colorbar
-            # Use the figure from the axis to add colorbar
-            ax.figure.colorbar(mappable, ax=ax, fraction=0.046, pad=0.04)
-
-        ax.set_title(title, fontweight="bold", fontsize=10)
+        # Remove ticks but keep frame?
+        # Image shows frame (box) around images.
         ax.set_xticks([])
         ax.set_yticks([])
 
-    @staticmethod
-    def _validate_image(image: np.ndarray) -> tuple[np.ndarray, bool, int]:
-        """
-        Validate and normalize image array.
+    def _plot_diff(self, ax, diff: np.ndarray, cmap: str):
+        # Normalize for visualization if not already?
+        # Metrics return uint8 [0, 255].
+        # We should plot it in [0, 255] or [0, 1].
+        # imshow handles data range automatically if it floats or ints.
 
-        Returns:
-            Tuple of (normalized_image, is_grayscale, n_channels)
-        """
-        # Validate image dimensions
-        if image.ndim not in (2, 3):
-            raise ValueError(
-                f"Image must be 2D (H, W) or 3D (H, W, C), got shape {image.shape}"
-            )
+        im_data = diff
 
-        # Handle 2D images (already grayscale)
-        if image.ndim == 2:
-            return image, True, 1
-
-        # 3D image - analyze channels
-        n_channels = image.shape[2]
-
-        if n_channels == 1:
-            # Grayscale with explicit channel dimension
-            return image.squeeze(), True, 1
-        elif n_channels == 3:
-            # RGB image
-            return image, False, 3
-        elif n_channels == 4:
-            # ARGB image - remove alpha channel
-            warnings.warn(
-                "Image has 4 channels (ARGB), displaying RGB only (alpha channel removed)",
-                UserWarning,
-            )
-            return image[:, :, :3], False, 3
+        if len(diff.shape) > 2 and diff.shape[-1] == 3:
+            # Convert to grayscale magnitude for heatmap
+            # Assuming typically differences are magnitude-like.
+            im_data = np.mean(diff, axis=-1)
         else:
-            raise ValueError(
-                f"Image has unsupported number of channels: {n_channels}. "
-                "Expected 1, 2, 3 (RGB), or 4 (ARGB) channels."
-            )
+            im_data = diff.squeeze()
 
-    @staticmethod
-    def _apply_visualization(
-        ax,
-        img_to_plot: np.ndarray,
-        is_grayscale: bool,
-        n_channels: int,
-        cmap: str | None,
-    ) -> Any:
-        """Apply visualization with appropriate colormap handling and return the mappable."""
-        if cmap is not None:
-            # User specified a colormap
-            if not is_grayscale and n_channels == 3:
-                # RGB image with colormap requested - convert to grayscale first
-                img_gray = Plotter._rgb_to_grayscale(img_to_plot)
-                return ax.imshow(img_gray, cmap=cmap)
-            else:
-                # Grayscale image or single-channel - apply colormap directly
-                return ax.imshow(img_to_plot.squeeze(), cmap=cmap)
-        else:
-            # No colormap specified
-            if is_grayscale:
-                # Display grayscale with 'gray' colormap
-                return ax.imshow(img_to_plot, cmap="gray")
-            else:
-                # Display RGB naturally
-                return ax.imshow(img_to_plot)
+        # Normalize to 0-1 for colorbar consistency usually looks better?
+        # Or keep raw values. Let"s keep raw but if it is uint8, matplotlib expects 0-255.
+        im = ax.imshow(im_data, cmap=cmap)
 
-    @staticmethod
-    def _rgb_to_grayscale(rgb_image: np.ndarray) -> np.ndarray:
-        """Convert RGB image to grayscale using the mean of dimensions. A machine learning model
-        don't has the human limitations, so the luminance formula is not correct to use"""
-        return np.mean(rgb_image, axis=2)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        return im

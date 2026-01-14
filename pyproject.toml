@@ -1,6 +1,6 @@
 [project]
 name = "pybox"
-version = "0.1.1"
+version = "0.2.1"
 description = "A Python library for Explainable artificial intelligence."
 authors = [{ name = "Andres B.S." }]
 license = "MIT"
