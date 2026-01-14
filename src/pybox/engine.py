@@ -3,12 +3,13 @@ Adversarial Engine.
 Orchestrates the generation of adversarial examples and checking of metrics.
 """
 
-from typing import List, Optional, Any, Callable
+from typing import List, Optional, Any, Callable, Literal
 import numpy as np
 from tqdm import tqdm
 
 from .core.interfaces import AttackStrategy, MetricStrategy
 from .core.models import ExperimentResult, AttackResult
+from .metrics import METRIC_MAP, METRIC_LITERALS
 
 
 class AdversarialEngine:
@@ -20,7 +21,9 @@ class AdversarialEngine:
         self,
         classifier: Any,
         attacks: List[AttackStrategy],
-        metric: MetricStrategy | Callable[[np.ndarray, np.ndarray], np.ndarray],
+        metric: MetricStrategy
+        | Callable[[np.ndarray, np.ndarray], np.ndarray]
+        | METRIC_LITERALS,
         clip_values: tuple[float, float] | None = (0.0, 1.0),
     ):
         """
@@ -35,8 +38,14 @@ class AdversarialEngine:
         self.classifier = classifier
         self.attacks = attacks
 
-        # Support callable metrics by wrapping
-        if callable(metric) and not isinstance(metric, MetricStrategy):
+        # Support callable metrics by wrapping and also string literals for basic metrics
+        if isinstance(metric, str):
+            if metric in METRIC_MAP:
+                self.metric = METRIC_MAP[metric]()
+            else:
+                raise ValueError(f"Unknown metric: {metric}")
+        elif callable(metric) and not isinstance(metric, MetricStrategy):
+
             class CallableMetricAdapter:
                 def __init__(self, func):
                     self.func = func

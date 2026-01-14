@@ -3,10 +3,12 @@ Pixel-based metrics (MAE, MSE, RMSE).
 """
 
 import numpy as np
+
+from pybox.core.interfaces import MetricStrategy
 from .utils import normalize_diff
 
 
-class MAEMetric:
+class MAEMetric(MetricStrategy):
     """Mean Absolute Error metric strategy."""
 
     def calculate(self, original: np.ndarray, adversarial: np.ndarray) -> np.ndarray:
@@ -14,7 +16,7 @@ class MAEMetric:
         return normalize_diff(diff)
 
 
-class MSEMetric:
+class MSEMetric(MetricStrategy):
     """Mean Squared Error metric strategy."""
 
     def calculate(self, original: np.ndarray, adversarial: np.ndarray) -> np.ndarray:
@@ -22,7 +24,7 @@ class MSEMetric:
         return normalize_diff(diff)
 
 
-class RMSEMetric:
+class RMSEMetric(MetricStrategy):
     """Root Mean Square Error metric strategy."""
 
     def calculate(self, original: np.ndarray, adversarial: np.ndarray) -> np.ndarray:

@@ -3,7 +3,7 @@ Core interfaces for PyBox using Protocols.
 This file defines the contracts that components must satisfy.
 """
 
-from typing import Protocol, runtime_checkable, Optional
+from typing import Protocol, runtime_checkable
 import numpy as np
 
 

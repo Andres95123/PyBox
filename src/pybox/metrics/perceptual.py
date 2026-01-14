@@ -3,10 +3,12 @@ Perceptual metrics (Cosine, GMD).
 """
 
 import numpy as np
+
+from pybox.core.interfaces import MetricStrategy
 from .utils import normalize_diff
 
 
-class CosineMetric:
+class CosineMetric(MetricStrategy):
     """Cosine Similarity metric strategy."""
 
     def calculate(self, original: np.ndarray, adversarial: np.ndarray) -> np.ndarray:
@@ -23,7 +25,7 @@ class CosineMetric:
         return normalize_diff(dif_img)
 
 
-class GMDMetric:
+class GMDMetric(MetricStrategy):
     """Gradient Magnitude Difference metric strategy."""
 
     def calculate(self, original: np.ndarray, adversarial: np.ndarray) -> np.ndarray:
