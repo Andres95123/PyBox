@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 from pybox.metrics import MAEMetric, MSEMetric, RMSEMetric, CosineMetric, GMDMetric
+from pybox.metrics.utils import normalize_diff
 
 
 @pytest.fixture
@@ -17,6 +18,48 @@ def test_mae_metric(sample_images):
     assert diff.shape == img1.shape
     assert diff.dtype == np.uint8
     assert diff.min() > 250  # Should be 255 normalized
+
+    # Test usage by hand
+    diff_manual = np.abs(img1.astype(np.float32) - img2.astype(np.float32))
+    diff_manual = normalize_diff(diff_manual)
+    assert np.array_equal(diff, diff_manual)
+
+
+def test_mse_metric(sample_images):
+    img1, img2 = sample_images
+    metric = MSEMetric()
+    diff = metric.calculate(img1, img2)
+    assert diff.shape == img1.shape
+    assert diff.dtype == np.uint8
+    assert diff.min() > 250  # Should be 255 normalized
+
+    # Test usage by hand
+    diff_manual = np.square(img1.astype(np.float32) - img2.astype(np.float32))
+    diff_manual = normalize_diff(diff_manual)
+    assert np.array_equal(diff, diff_manual)
+
+
+def test_rmse_metric(sample_images):
+    img1, img2 = sample_images
+    metric = RMSEMetric()
+    diff = metric.calculate(img1, img2)
+    assert diff.shape == img1.shape
+    assert diff.dtype == np.uint8
+    assert diff.min() > 250  # Should be 255 normalized
+
+    # Test usage by hand
+    diff_manual = np.square(img1.astype(np.float32) - img2.astype(np.float32))
+    diff_manual = np.sqrt(diff_manual)
+    diff_manual = normalize_diff(diff_manual)
+    assert np.array_equal(diff, diff_manual)
+
+
+def test_normalize_diff():
+    diff_img = np.array([[0.0, 0.5], [1.0, 2.0]], dtype=np.float32)
+    normalized = normalize_diff(diff_img)
+    assert normalized.dtype == np.uint8
+    assert normalized.max() == 255
+    assert normalized.min() == 0
 
 
 def test_shape_consistency():
