@@ -37,7 +37,7 @@ def test_engine_basic_flow():
     assert len(results[0].attacks) == 1
     # Successful? Pred=0. GT=0. OriginalPred=0.
     # AdvPred=0. Success = (0!=0) = False (Untargeted)
-    assert results[0].attacks[0].success == False
+    assert not results[0].attacks[0].success
 
 
 # Tests trying the callback autowrapper metric (input as a function)
@@ -66,3 +66,26 @@ def test_engine_with_callback_metric():
         pred_mae = res_mae.attacks[0].prediction
 
         assert pred_custom == pred_mae
+        
+def test_engine_with_custom_metric_object():
+    clf = MockClassifier()
+    art_atk = MockArtAttack(clf)
+    adapter = ArtAttackAdapter(art_atk, name="MockAttack")
+
+    class CustomMetric:
+        def calculate(self, original, adversarial):
+            return np.abs(original - adversarial).astype(np.uint8)
+
+    custom_metric = CustomMetric()
+    engine_custom = AdversarialEngine(clf, [adapter], custom_metric)
+
+    images = np.zeros((2, 28, 28, 3))
+    labels = np.zeros(2)
+    results_custom = engine_custom.run(images, ground_truth=labels, verbose=False)
+
+    assert len(results_custom) == 2
+    for res in results_custom:
+        diff = res.attacks[0].adversarial_image
+        assert np.array_equal(diff, np.zeros((28, 28, 3), dtype=np.uint8))
+        pred = res.attacks[0].prediction
+        assert pred == 0
