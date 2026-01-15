@@ -3,6 +3,7 @@ from matplotlib.figure import Figure
 import numpy as np
 from typing import List, Dict, Optional
 from ..core.models import ExperimentResult
+from ..metrics.utils import normalize_diff
 
 
 class Plotter:
@@ -109,10 +110,12 @@ class Plotter:
                             should_show_diff = True
 
                     if should_show_diff:
-                        im = self._plot_diff(ax_diff, atk.difference_map, cmap=cmap)
+                        # Normalize difference map before plotting and aggregation
+                        normalized_diff = normalize_diff(atk.difference_map)
+                        im = self._plot_diff(ax_diff, normalized_diff, cmap=cmap)
 
                         # Collect for aggregation
-                        diff_accumulator.append(atk.difference_map)
+                        diff_accumulator.append(normalized_diff)
 
                         # Title: "Difference (MethodName)"
                         ax_diff.set_title(
@@ -136,19 +139,13 @@ class Plotter:
             if show_aggregated:
                 ax_agg = axes[idx, current_col]
                 if diff_accumulator:
-                    # Sum normalized difference maps
-                    # Assuming dimensions match.
-                    # If they are uint8 (0-255), sum might overflow if not careful, cast to float.
+                    # Sum already-normalized difference maps
                     total_diff = np.zeros_like(diff_accumulator[0], dtype=np.float32)
                     for d in diff_accumulator:
                         total_diff += d.astype(np.float32)
 
-                    # Normalize back to 0-255 for visualization
-                    max_val = total_diff.max()
-                    if max_val > 1e-7:
-                        total_diff = (total_diff / max_val) * 255.0
-
-                    total_diff = total_diff.astype(np.uint8)
+                    # Normalize the aggregated sum
+                    total_diff = normalize_diff(total_diff)
 
                     im = self._plot_diff(ax_agg, total_diff, cmap=cmap)
                     ax_agg.set_title(

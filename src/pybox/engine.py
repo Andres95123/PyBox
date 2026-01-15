@@ -45,7 +45,7 @@ class AdversarialEngine:
             else:
                 raise ValueError(f"Unknown metric: {metric}")
         elif callable(metric) and not isinstance(metric, MetricStrategy):
-
+            # Wrap callable into MetricStrategy
             class CallableMetricAdapter:
                 def __init__(self, func):
                     self.func = func
