@@ -11,6 +11,8 @@ dependencies = [
     "adversarial-robustness-toolbox>=1.20.1",
     "matplotlib>=3.10.7",
     "scikit-learn>=1.7.2",
+    "numpy>=1.26.4",
+    "scipy>=1.11.4",
     "tqdm>=4.67.1",
 ]
 

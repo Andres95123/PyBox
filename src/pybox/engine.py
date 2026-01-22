@@ -50,7 +50,7 @@ class AdversarialEngine:
                 def __init__(self, func):
                     self.func = func
 
-                def calculate(self, original, adversarial):
+                def __call__(self, original, adversarial):
                     return self.func(original, adversarial)
 
             self.metric = CallableMetricAdapter(metric)
@@ -145,7 +145,7 @@ class AdversarialEngine:
 
             diff_map = None
             if success:
-                diff_map = self.metric.calculate(image, adv_img)
+                diff_map = self.metric(image, adv_img)
 
             attack_res = AttackResult(
                 method_name=attack.name,

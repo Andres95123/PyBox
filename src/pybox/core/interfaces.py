@@ -35,7 +35,7 @@ class MetricStrategy(Protocol):
     Interface for comparing two images.
     """
 
-    def calculate(self, original: np.ndarray, adversarial: np.ndarray) -> np.ndarray:
+    def __call__(self, original: np.ndarray, adversarial: np.ndarray) -> np.ndarray:
         """
         Calculates the difference between two images.
 

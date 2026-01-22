@@ -4,6 +4,10 @@ Perceptual metrics (Cosine, GMD).
 
 import numpy as np
 
+# Import from sklearn the cosine and gradient functions
+from sklearn.metrics.pairwise import cosine_similarity
+from scipy.ndimage import gaussian_gradient_magnitude
+
 from pybox.core.interfaces import MetricStrategy
 from .utils import normalize_diff
 
@@ -11,33 +15,38 @@ from .utils import normalize_diff
 class CosineMetric(MetricStrategy):
     """Cosine Similarity metric strategy."""
 
-    def calculate(self, original: np.ndarray, adversarial: np.ndarray) -> np.ndarray:
-        def cosine_sim(a, b):
-            dot = np.sum(a * b, axis=-1)
-            norm_a = np.linalg.norm(a, axis=-1)
-            norm_b = np.linalg.norm(b, axis=-1)
-            return dot / (norm_a * norm_b + 1e-10)
+    def __call__(self, original: np.ndarray, adversarial: np.ndarray) -> np.ndarray:
+        # Reshape images to (num_pixels, num_channels) for cosine_similarity computation
+        orig_pixels = original.reshape(-1, original.shape[-1]).astype(float)
+        adv_pixels = adversarial.reshape(-1, adversarial.shape[-1]).astype(float)
 
-        sim = cosine_sim(original.astype(float), adversarial.astype(float))
+        # Compute cosine similarity between corresponding pixels
+        sim_matrix = cosine_similarity(orig_pixels, adv_pixels)
+        sim = np.diag(sim_matrix)
         diff = 1 - sim
-        # Expand to 3 channels for consistency (as per original implementation)
-        dif_img = np.stack([diff] * 3, axis=-1)
+
+        # Reshape back to image dimensions and expand to 3 channels
+        diff_img = diff.reshape(original.shape[:-1])
+        dif_img = np.stack([diff_img] * 3, axis=-1)
         return normalize_diff(dif_img)
 
 
 class GMDMetric(MetricStrategy):
-    """Gradient Magnitude Difference metric strategy."""
+    """Gradient Magnitude Difference metric strategy using Gaussian Gradient Magnitude."""
 
-    def calculate(self, original: np.ndarray, adversarial: np.ndarray) -> np.ndarray:
-        def compute_grad(img):
-            grad = np.zeros_like(img, dtype=float)
-            for c in range(img.shape[2]):
-                ch = img[:, :, c].astype(float)
-                grad_y, grad_x = np.gradient(ch)
-                grad[:, :, c] = np.sqrt(grad_x**2 + grad_y**2)
-            return grad
+    def __call__(self, original: np.ndarray, adversarial: np.ndarray) -> np.ndarray:
+        # Compute Gaussian gradient magnitude for each channel
+        grad1 = np.zeros_like(original, dtype=float)
+        grad2 = np.zeros_like(adversarial, dtype=float)
 
-        g1 = compute_grad(original)
-        g2 = compute_grad(adversarial)
-        diff = np.abs(g1 - g2)
+        for c in range(original.shape[2]):
+            grad1[:, :, c] = gaussian_gradient_magnitude(
+                original[:, :, c].astype(float), sigma=1.0
+            )
+            grad2[:, :, c] = gaussian_gradient_magnitude(
+                adversarial[:, :, c].astype(float), sigma=1.0
+            )
+
+        # Compute absolute difference between gradient magnitudes
+        diff = np.abs(grad1 - grad2)
         return normalize_diff(diff)
