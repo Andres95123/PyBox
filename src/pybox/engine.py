@@ -65,6 +65,7 @@ class AdversarialEngine:
         ground_truth: np.ndarray | None = None,
         target_labels: np.ndarray | None = None,
         verbose: bool = True,
+        batch_size: int = 32,
     ) -> List[ExperimentResult]:
         """
         Run the experiment on a batch of images.
@@ -74,91 +75,149 @@ class AdversarialEngine:
             ground_truth: Ground truth labels (N,).
             target_labels: Target labels for attacks (N,).
             verbose: Whether to show progress bar.
+            batch_size: Number of images to process at once. Default 32 for performance.
 
         Returns:
             List of ExperimentResult objects.
         """
         results = []
-        iterator = range(len(images))
+        total_images = len(images)
+        pbar = None
+
         if verbose:
-            iterator = tqdm(iterator, desc="Processing images")
+            pbar = tqdm(total=total_images, desc="Processing images")
 
-        for i in iterator:
-            image = images[i]
-            gt = ground_truth[i] if ground_truth is not None else None
-            target = target_labels[i] if target_labels is not None else None
+        try:
+            for i in range(0, total_images, batch_size):
+                batch_end = min(i + batch_size, total_images)
 
-            result = self._process_single_image(image, gt, target)
-            results.append(result)
+                batch_images = images[i:batch_end]
+                batch_gt = (
+                    ground_truth[i:batch_end] if ground_truth is not None else None
+                )
+                batch_targets = (
+                    target_labels[i:batch_end] if target_labels is not None else None
+                )
+
+                batch_results = self._process_batch(
+                    batch_images, batch_gt, batch_targets
+                )
+                results.extend(batch_results)
+
+                if pbar:
+                    pbar.update(batch_end - i)
+        finally:
+            if pbar:
+                pbar.close()
 
         return results
+
+    def _process_batch(
+        self,
+        images: np.ndarray,
+        ground_truth: np.ndarray | None,
+        targets: np.ndarray | None,
+    ) -> List[ExperimentResult]:
+        """
+        Process a batch of images efficiently.
+        """
+        # Batch size for this chunk
+        N = len(images)
+
+        # Clip original if needed (Batch op)
+        if self.clip_values:
+            images = np.clip(images, self.clip_values[0], self.clip_values[1])
+
+        # Get original predictions (Batch op)
+        # Assuming classifier has predict method accepting (N, H, W, C)
+        probs = self.classifier.predict(images)
+        orig_preds = np.argmax(probs, axis=1)
+
+        # Helper to hold attack data
+        processed_attacks = []
+
+        for attack in self.attacks:
+            # Generate adversarial (Batch op)
+            adv_imgs = attack.generate(images, targets)
+
+            # Clip (Batch op)
+            if self.clip_values:
+                adv_imgs = np.clip(adv_imgs, self.clip_values[0], self.clip_values[1])
+
+            # Ensure dtype is float32 for compatibility
+            adv_imgs = adv_imgs.astype(np.float32)
+
+            # Predict (Batch op)
+            adv_probs = self.classifier.predict(adv_imgs)
+            adv_preds = np.argmax(adv_probs, axis=1)
+
+            # Check success (Vectorized)
+            if targets is not None:
+                successes = adv_preds == targets
+            else:
+                if ground_truth is not None:
+                    successes = adv_preds != ground_truth
+                else:
+                    successes = adv_preds != orig_preds
+
+            processed_attacks.append(
+                {
+                    "attack": attack,
+                    "adv_imgs": adv_imgs,
+                    "preds": adv_preds,
+                    "successes": successes,
+                }
+            )
+
+        # Assemble results per image to compute metrics (Loop)
+        # We loop here to use per-image metric normalization as per legacy behavior
+        batch_experiment_results = []
+
+        for i in range(N):
+            image = images[i]
+            gt = ground_truth[i] if ground_truth is not None else None
+            orig_pred = int(orig_preds[i])
+
+            attack_results = []
+
+            for p_attack in processed_attacks:
+                attack = p_attack["attack"]
+                adv_img = p_attack["adv_imgs"][i]
+                adv_pred = int(p_attack["preds"][i])
+                success = bool(p_attack["successes"][i])
+
+                diff_map = None
+                if success:
+                    # Metric computation is per-image to preserve normalization behavior
+                    diff_map = self.metric(image, adv_img)
+
+                attack_results.append(
+                    AttackResult(
+                        method_name=attack.name,
+                        adversarial_image=adv_img,
+                        prediction=adv_pred,
+                        success=success,
+                        difference_map=diff_map,
+                    )
+                )
+
+            batch_experiment_results.append(
+                ExperimentResult(
+                    original_image=image,
+                    ground_truth=gt,
+                    original_prediction=orig_pred,
+                    attacks=attack_results,
+                )
+            )
+
+        return batch_experiment_results
 
     def _process_single_image(
         self, image: np.ndarray, ground_truth: Optional[int], target: Optional[int]
     ) -> ExperimentResult:
-        # Clip original if needed
-        if self.clip_values:
-            image = np.clip(image, self.clip_values[0], self.clip_values[1])
+        # Compatibility wrapper for single images
+        img_batch = image[np.newaxis, ...]
+        gt_batch = np.array([ground_truth]) if ground_truth is not None else None
+        target_batch = np.array([target]) if target is not None else None
 
-        # Get original prediction
-        # Expecting classifier to take batch (1, H, W, C)
-        probs = self.classifier.predict(image[np.newaxis, ...])
-        orig_pred = int(np.argmax(probs, axis=1)[0])
-
-        attack_results = []
-
-        for attack in self.attacks:
-            # Generate adversarial
-            adv_img = attack.generate(image, target)
-
-            # Clip adversarial
-            if self.clip_values:
-                adv_img = np.clip(adv_img, self.clip_values[0], self.clip_values[1])
-
-            # Ensure dtype is float32 for PyTorch compatibility
-            adv_img = adv_img.astype(np.float32)
-
-            # Predict on adversarial
-            adv_probs = self.classifier.predict(adv_img[np.newaxis, ...])
-            adv_pred = int(np.argmax(adv_probs, axis=1)[0])
-
-            # Check success
-            if target is not None:
-                success = adv_pred == target
-            else:
-                # Untargeted: success if prediction changed
-                # If ground truth is known, success implies misclassification relative to GT?
-                # Or relative to original prediction?
-                # Standard definition: misclassified.
-                if ground_truth is not None:
-                    success = adv_pred != ground_truth
-                else:
-                    success = adv_pred != orig_pred
-
-            # Compute metric
-            # Only compute if we want to? Original code computed if success or always?
-            # Original code: if success: compute difference. else: zeros.
-            # We will compute it always or handle it.
-            # Ideally we want to know the difference regardless of success?
-            # But let's follow the "success" logic if it saves time, or just compute always.
-            # Original code said: "if success: difference... else pass"
-
-            diff_map = None
-            if success:
-                diff_map = self.metric(image, adv_img)
-
-            attack_res = AttackResult(
-                method_name=attack.name,
-                adversarial_image=adv_img,
-                prediction=adv_pred,
-                success=success,
-                difference_map=diff_map,
-            )
-            attack_results.append(attack_res)
-
-        return ExperimentResult(
-            original_image=image,
-            ground_truth=ground_truth,
-            original_prediction=orig_pred,
-            attacks=attack_results,
-        )
+        return self._process_batch(img_batch, gt_batch, target_batch)[0]

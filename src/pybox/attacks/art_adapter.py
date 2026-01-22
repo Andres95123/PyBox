@@ -23,24 +23,31 @@ class ArtAttackAdapter:
         self._attack = art_attack
         self.name = name or art_attack.__class__.__name__
 
-    def generate(self, image: np.ndarray, target: int | None = None) -> np.ndarray:
+    def generate(
+        self, image: np.ndarray, target: int | np.ndarray | None = None
+    ) -> np.ndarray:
         """
         Generate an adversarial example using the wrapped ART attack.
 
         Args:
-            image: Original image (H, W, C).
-            target: Target label index (optional).
+            image: Original image (H, W, C) or Batch (N, H, W, C).
+            target: Target label index or array of indices (optional).
 
         Returns:
-            Adversarial image (H, W, C).
+            Adversarial image (H, W, C) or Batch (N, H, W, C).
         """
-        # Expand dims for batch processing (ART expects batches)
-        x = image[np.newaxis, ...]
+        # Determine if input is a batch
+        is_batch = image.ndim == 4
 
+        # Expand dims for batch processing if single image (ART expects batches)
+        x = image if is_batch else image[np.newaxis, ...]
+
+        y = None
         if target is not None:
-            y = np.array([target])
-            adv_x = self._attack.generate(x=x, y=y)
-        else:
-            adv_x = self._attack.generate(x=x)
+            # Ensure target is an array matching the batch size
+            y = np.atleast_1d(target)
 
-        return adv_x[0]
+        adv_x = self._attack.generate(x=x, y=y)
+
+        # Return in the same dimensionality as input
+        return adv_x if is_batch else adv_x[0]

@@ -15,16 +15,18 @@ class AttackStrategy(Protocol):
 
     name: str
 
-    def generate(self, image: np.ndarray, target: int | None = None) -> np.ndarray:
+    def generate(
+        self, image: np.ndarray, target: int | np.ndarray | None = None
+    ) -> np.ndarray:
         """
         Generates an adversarial example.
 
         Args:
-            image: The original image.
-            target: The target label (optional).
+            image: The original image or batch of images.
+            target: The target label (optional) or batch of targets.
 
         Returns:
-            The adversarial image.
+            The adversarial image or batch of adversarial images.
         """
         ...
 
