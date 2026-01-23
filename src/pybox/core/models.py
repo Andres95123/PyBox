@@ -31,3 +31,22 @@ class ExperimentResult:
     ground_truth: Optional[int]
     original_prediction: int
     attacks: List[AttackResult]
+
+
+@dataclass
+class PointsResult:
+    """
+    Result of point-based metrics.
+    """
+
+    method_name: str
+    points: List[tuple[int, int]]  # List of (x, y) coordinates
+
+
+@dataclass
+class BenchmarkResult:
+    """
+    Result of benchmarking multiple attacks and metrics.
+    """
+
+    points_results: List[PointsResult]

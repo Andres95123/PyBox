@@ -13,8 +13,6 @@ class AttackStrategy(Protocol):
     Interface for any adversarial attack.
     """
 
-    name: str
-
     def generate(self, image: np.ndarray, target: int | None = None) -> np.ndarray:
         """
         Generates an adversarial example.
@@ -47,3 +45,11 @@ class MetricStrategy(Protocol):
             A difference map (image).
         """
         ...
+
+
+@runtime_checkable
+class BenchmarkingStrategy(Protocol):
+    """
+    Interface for benchmarking testing.
+    """
+    ...

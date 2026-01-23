@@ -2,17 +2,19 @@
 Adapter for ART (Adversarial Robustness Toolbox) attacks.
 """
 
-from typing import Optional, Any
+from typing import Any
 import numpy as np
 from ..core.interfaces import AttackStrategy
 
 
-class ArtAttackAdapter:
+class ArtAttackAdapter(AttackStrategy):
     """
     Adapter to make ART attacks compatible with AttackStrategy protocol.
     """
 
-    def __init__(self, art_attack: Any, name: Optional[str] = None):
+    name: str
+
+    def __init__(self, art_attack: Any, name: str | None = None) -> None:
         """
         Initialize the adapter.
 
@@ -21,7 +23,7 @@ class ArtAttackAdapter:
             name: Optional name for the attack. Defaults to class name.
         """
         self._attack = art_attack
-        self.name = name or art_attack.__class__.__name__
+        self.name = name if name is not None else art_attack.__class__.__name__
 
     def generate(self, image: np.ndarray, target: int | None = None) -> np.ndarray:
         """
