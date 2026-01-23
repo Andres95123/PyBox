@@ -25,7 +25,7 @@ class FoolBench:
         max_iters_range = sorted(max_iters_range)
         results = BenchmarkResult(points_results=[])
         # For each attack
-        for attack in tqdm(self._attacks):
+        for attack in (pb := tqdm(self._attacks)):
             # Try each max iteration setting
             attack_points = PointsResult(
                 method_name=attack.name,
@@ -33,20 +33,14 @@ class FoolBench:
             )
             for iterations in max_iters_range:
                 attack._attack.__setattr__("max_iter", iterations)
+                pb.set_description(f"Iteration for {attack.name} now {iterations}")
                 # Generate adversarial example
                 adversarial_example = attack.generate(image_np, target=target)
                 predictions = attack._attack.estimator.predict(
                     adversarial_example[np.newaxis, ...].astype(np.float32)
                 )
-                # Get the most probable class and calculate the confidence (probability)
-                # predicted_class = int(np.argmax(predictions[0]))
 
-                # class_difference = abs(
-                #     predictions[0][ground_truth] - predictions[0][predicted_class]
-                # )
-                class_difference = predictions[0][ground_truth]
-
-                attack_points.points.append((iterations, class_difference))
+                attack_points.points.append((iterations, predictions[0][ground_truth]))
 
             results.points_results.append(attack_points)
 
